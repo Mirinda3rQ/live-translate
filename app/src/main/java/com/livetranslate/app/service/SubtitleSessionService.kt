@@ -439,4 +439,264 @@ class SubtitleSessionService : Service() {
                 AudioSourceMode.MEDIA_AND_MIC -> {
                     val projection = mediaProjection
                         ?: throw IllegalStateException(AppStrings.get(R.string.error_missing_projection))
-              
+              val mixer = PcmMixer { mixed -> client.sendPcm16le(mixed, 16_000) }
+                    pcmMixer = mixer
+                    val media = SystemAudioCapturer(ioScope)
+                    mediaCapturer = media
+                    media.start(projection, { pcm -> mixer.offerMedia(pcm) }, onCaptureError)
+                    val mic = MicAudioCapturer(ioScope)
+                    micCapturer = mic
+                    mic.start({ pcm -> mixer.offerMic(pcm) }, onCaptureError)
+                }
+            }
+            SessionBus.setStatus(SessionBus.Status.Running, AppStrings.get(R.string.status_waiting_audio))
+        } catch (e: Exception) {
+            Log.e(TAG, "capture start failed", e)
+            SessionBus.setStatus(SessionBus.Status.Error, e.message ?: AppStrings.get(R.string.error_capture_start_failed))
+            stopEverything(e.message ?: AppStrings.get(R.string.error_capture_start_failed))
+        }
+    }
+
+    /**
+     * Collapse or restore the overlay when source language equals the target.
+     * When collapsed, the input transcript is shown as the single caption line
+     * and echoed translation audio is muted so it does not double the source.
+     */
+    private fun applyCaptionMode(enabled: Boolean) {
+        overlay?.setSameLanguageMode(enabled)
+        applyTranslatedAudioEnabled()
+        publishCaptionUpdate(inputChanged = true, outputChanged = true)
+    }
+
+    /**
+     * Play translation audio only when the user asked for it *and* the source
+     * is a different language. Same-language sessions still request echo from
+     * the API (needed for captions) but drop the parroted PCM locally.
+     */
+    private fun applyTranslatedAudioEnabled() {
+        audioPlayer?.setEnabled(
+            sameLanguageMode.shouldPlayTranslatedAudio(currentSettings.playTranslatedAudio),
+        )
+    }
+
+    private fun publishCaptionUpdate(inputChanged: Boolean, outputChanged: Boolean) {
+        val inDisplay = TranscriptLineBreaker.format(accumulatedInput.toString())
+        val outDisplay = TranscriptLineBreaker.format(accumulatedOutput.toString())
+        if (sameLanguageMode.enabled) {
+            val line = inDisplay.ifBlank { outDisplay }
+            overlay?.updateTranscripts(input = "", output = line)
+            publishPreview(input = "", output = line)
+        } else {
+            overlay?.updateTranscripts(
+                input = if (inputChanged) inDisplay else null,
+                output = if (outputChanged) outDisplay else null,
+            )
+            publishPreview(
+                input = if (inputChanged) inDisplay else null,
+                output = if (outputChanged) outDisplay else null,
+            )
+        }
+    }
+
+    private fun appendTranscript(buffer: StringBuilder, chunk: String) {
+        TranscriptBuffer.append(buffer, chunk, maxChars = 800)
+    }
+
+    private fun appendFull(buffer: StringBuilder, chunk: String) {
+        TranscriptBuffer.append(buffer, chunk, maxChars = 200_000)
+    }
+
+    private fun publishPreview(input: String? = null, output: String? = null) {
+        if (input != null) pendingPreviewInput = input
+        if (output != null) pendingPreviewOutput = output
+        val now = System.currentTimeMillis()
+        val wait = PREVIEW_THROTTLE_MS - (now - lastPreviewAtMs)
+        if (wait <= 0L) {
+            flushPreview()
+            return
+        }
+        if (previewFlushJob?.isActive == true) return
+        previewFlushJob = scope.launch {
+            delay(wait)
+            flushPreview()
+        }
+    }
+
+    private fun flushPreview() {
+        previewFlushJob?.cancel()
+        previewFlushJob = null
+        if (pendingPreviewInput == null && pendingPreviewOutput == null) return
+        lastPreviewAtMs = System.currentTimeMillis()
+        SessionBus.setPreview(input = pendingPreviewInput, output = pendingPreviewOutput)
+        pendingPreviewInput = null
+        pendingPreviewOutput = null
+    }
+
+    private fun buildNotification(): Notification {
+        val stopIntent = Intent(this, SubtitleSessionService::class.java).setAction(ACTION_STOP)
+        val stopPi = PendingIntent.getService(
+            this,
+            1,
+            stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val openPi = PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        return NotificationCompat.Builder(this, LiveTranslateApp.CHANNEL_SUBTITLE)
+            .setContentTitle(getString(R.string.notification_subtitle_running))
+            .setContentText(getString(R.string.notification_subtitle_text))
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentIntent(openPi)
+            .addAction(0, getString(R.string.action_stop), stopPi)
+            .setOngoing(true)
+            .build()
+    }
+
+    private fun startAsForeground() {
+        val notification = buildNotification()
+        val fgsType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            when (audioSourceMode) {
+                AudioSourceMode.MEDIA ->
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                AudioSourceMode.MIC ->
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                AudioSourceMode.MEDIA_AND_MIC ->
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            }
+        } else {
+            0
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && fgsType != 0) {
+            startForeground(NOTIFICATION_ID, notification, fgsType)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    /** Used when the process is restarted with a null intent so we still hit startForeground. */
+    private fun ensureForegroundNotification() {
+        val notification = buildNotification()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+            )
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun stopEverything(message: String, error: Boolean = false) {
+        if (stopping) return
+        stopping = true
+        sessionJob?.cancel()
+        sessionJob = null
+        reconnectJob?.cancel()
+        reconnectJob = null
+        reconnectAttempts = 0
+        flushPreview()
+        val inFull = fullInput.toString()
+        val rawOut = fullOutput.toString()
+        val outFull = when {
+            rawOut.isNotBlank() -> rawOut
+            sameLanguageMode.enabled -> inFull
+            else -> rawOut
+        }
+        if (inFull.isNotBlank() || outFull.isNotBlank()) {
+            SessionBus.markSessionFinished(inFull, outFull, message)
+        }
+        if (error) {
+            SessionBus.setStatus(SessionBus.Status.Error, message)
+        } else if (inFull.isBlank() && outFull.isBlank()) {
+            SessionBus.setStatus(SessionBus.Status.Stopped, message)
+        }
+        mediaCapturer?.stop()
+        mediaCapturer = null
+        micCapturer?.stop()
+        micCapturer = null
+        pcmMixer?.close()
+        pcmMixer = null
+        liveClient?.close()
+        liveClient?.destroy()
+        liveClient = null
+        audioPlayer?.release()
+        audioPlayer = null
+        overlay?.hide()
+        overlay = null
+        try {
+            mediaProjection?.stop()
+        } catch (_: Exception) {
+        }
+        mediaProjection = null
+        settingsJob?.cancel()
+        eventsJob?.cancel()
+        captureStarted = false
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    override fun onDestroy() {
+        mediaCapturer?.stop()
+        micCapturer?.stop()
+        pcmMixer?.close()
+        liveClient?.destroy()
+        audioPlayer?.release()
+        overlay?.hide()
+        try {
+            mediaProjection?.stop()
+        } catch (_: Exception) {
+        }
+        scope.cancel()
+        ioScope.cancel()
+        super.onDestroy()
+    }
+
+    companion object {
+        private const val TAG = "SubtitleSessionService"
+        private const val NOTIFICATION_ID = 42
+        private const val PREVIEW_THROTTLE_MS = 200L
+        private const val MAX_RECONNECTS = 6
+        private const val RECONNECT_BASE_DELAY_MS = 1_500L
+        const val ACTION_START = "com.livetranslate.app.action.START_SUBTITLE"
+        const val ACTION_STOP = "com.livetranslate.app.action.STOP_SUBTITLE"
+        const val EXTRA_RESULT_CODE = "result_code"
+        const val EXTRA_RESULT_DATA = "result_data"
+        const val EXTRA_AUDIO_SOURCE = "audio_source"
+
+        fun start(
+            context: Context,
+            audioSource: AudioSourceMode,
+            resultCode: Int? = null,
+            data: Intent? = null,
+        ) {
+            val intent = Intent(context, SubtitleSessionService::class.java).apply {
+                action = ACTION_START
+                putExtra(EXTRA_AUDIO_SOURCE, audioSource.name)
+                if (resultCode != null && data != null) {
+                    putExtra(EXTRA_RESULT_CODE, resultCode)
+                    putExtra(EXTRA_RESULT_DATA, data)
+                }
+            }
+            context.startForegroundService(intent)
+        }
+
+        fun stop(context: Context) {
+            context.startService(
+                Intent(context, SubtitleSessionService::class.java).setAction(ACTION_STOP),
+            )
+        }
+    }
+}
