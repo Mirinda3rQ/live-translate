@@ -117,6 +117,7 @@ class LiveTranslateClient {
         val echoTargetLanguage: Boolean = true,
         /** Server-issued handle; non-null reconnects into the previous session. */
         val resumptionHandle: String? = null,
+        val customPrompt: String = "",
     )
 
     sealed class ConnectionState {
@@ -485,63 +486,8 @@ class LiveTranslateClient {
         val model = config.modelId.trim().removePrefix("models/")
         val target = config.targetLanguageCode.trim().ifBlank { "zh-Hans" }
 
+        val prompt = config.customPrompt.trim()
+
         val generationConfig = JSONObject()
             .put("responseModalities", JSONArray().put("AUDIO"))
-            .put(
-                "translationConfig",
-                JSONObject()
-                    .put("targetLanguageCode", target)
-                    .put("echoTargetLanguage", config.echoTargetLanguage),
-            )
-
-        val resumption = config.resumptionHandle?.let { handle ->
-            JSONObject().put("handle", handle)
-        } ?: JSONObject()
-
-        val setup = JSONObject()
-            .put("model", "models/$model")
-            .put("generationConfig", generationConfig)
-            .put("inputAudioTranscription", JSONObject())
-            .put("outputAudioTranscription", JSONObject())
-            .put("sessionResumption", resumption)
-            .put(
-                "contextWindowCompression",
-                JSONObject().put("slidingWindow", JSONObject()),
-            )
-
-        return JSONObject().put("setup", setup).toString()
-    }
-
-    /** protobuf JSON duration (e.g. "59.5s", "60s") → milliseconds, null if absent. */
-    private fun parseDurationMs(value: String): Long? {
-        if (value.isBlank()) return null
-        val trimmed = value.trim().trimEnd('s')
-        return trimmed.toDoubleOrNull()?.let { (it * 1000).toLong() }
-    }
-
-    private fun buildUrl(endpoint: String, apiKey: String): String {
-        var base = endpoint.trim()
-        // Strip trailing spaces / accidental quotes from paste
-        base = base.trim('"', '\'')
-        // If user pasted a full URL that already has key=, leave it (but prefer our key)
-        if (base.contains("key=")) {
-            // Replace existing key
-            return base.replace(Regex("""([?&]key=)[^&]*"""), "$1$apiKey")
-        }
-        val separator = if (base.contains("?")) "&" else "?"
-        return "$base${separator}key=$apiKey"
-    }
-
-    private fun redactUrl(url: String): String =
-        url.replace(Regex("""([?&]key=)[^&]+"""), "$1***")
-
-    private fun JSONObject.optStringOrNull(name: String): String? {
-        if (!has(name) || isNull(name)) return null
-        val v = optString(name, "")
-        return v.ifBlank { null }
-    }
-
-    companion object {
-        private const val TAG = "LiveTranslateClient"
-    }
-}
+        // Custom prompt mode: regular Live models t
