@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Remove
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -75,6 +76,8 @@ fun SettingsScreen(
         mutableStateOf(TextFieldValue(settings.modelId, TextRange(settings.modelId.length)))
     }
     var revealKey by remember { mutableStateOf(false) }
+    var showPromptDialog by remember { mutableStateOf(false) }
+    var promptDraft by remember { mutableStateOf("") }
 
     var endpointHydrated by remember { mutableStateOf(false) }
     var modelHydrated by remember { mutableStateOf(false) }
@@ -107,6 +110,57 @@ fun SettingsScreen(
         focusedPlaceholderColor = scheme.onSurfaceVariantSummary,
         unfocusedPlaceholderColor = scheme.onSurfaceVariantSummary,
     )
+
+    if (showPromptDialog) {
+        AlertDialog(
+            onDismissRequest = { showPromptDialog = false },
+            containerColor = scheme.surface,
+            titleContentColor = scheme.onSurface,
+            textContentColor = scheme.onSurface,
+            title = { androidx.compose.material3.Text("Custom prompt") },
+            text = {
+                OutlinedTextField(
+                    value = promptDraft,
+                    onValueChange = { promptDraft = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 5,
+                    maxLines = 10,
+                    placeholder = {
+                        androidx.compose.material3.Text(
+                            "เช่น: คุณเป็นล่าม แปลทุกอย่างที่ได้ยินเป็นภาษาไทยที่เป็นธรรมชาติ ...",
+                        )
+                    },
+                    shape = RoundedCornerShape(16.dp),
+                    colors = fieldColors,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    text = "บันทึก",
+                    onClick = {
+                        val v = promptDraft.trim()
+                        viewModel.update { it.copy(customPrompt = v) }
+                        showPromptDialog = false
+                    },
+                )
+            },
+            dismissButton = {
+                Row {
+                    TextButton(
+                        text = "ล้าง",
+                        onClick = {
+                            viewModel.update { it.copy(customPrompt = "") }
+                            showPromptDialog = false
+                        },
+                    )
+                    TextButton(
+                        text = "ยกเลิก",
+                        onClick = { showPromptDialog = false },
+                    )
+                }
+            },
+        )
+    }
 
     Column(
         modifier = modifier
@@ -269,6 +323,44 @@ fun SettingsScreen(
         }
 
         SmallTitle(
+            text = "Custom prompt",
+            modifier = Modifier.padding(horizontal = 24.dp),
+        )
+        SectionCard {
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = if (settings.customPrompt.isBlank()) {
+                        "ยังไม่ได้ตั้ง (ใช้โหมดแปลปกติ)"
+                    } else {
+                        settings.customPrompt
+                    },
+                    fontSize = 13.sp,
+                    maxLines = 4,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+                Text(
+                    text = "ใช้ได้กับโมเดล Live ปกติเท่านั้น (ใส่ Model ID เอง) " +
+                        "โมเดล live-translate ไม่รับ prompt",
+                    fontSize = 12.sp,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+                Button(
+                    onClick = {
+                        promptDraft = settings.customPrompt
+                        showPromptDialog = true
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColorsPrimary(),
+                ) {
+                    Text(text = "แก้ไข prompt", fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+
+        SmallTitle(
             text = stringResource(R.string.settings_appearance),
             modifier = Modifier.padding(horizontal = 24.dp),
         )
@@ -373,69 +465,4 @@ fun SettingsScreen(
         )
         SectionCard {
             Column(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                TextButton(
-                    text = stringResource(R.string.settings_open_overlay),
-                    onClick = onOpenOverlayPermission,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Text(
-                    text = stringResource(R.string.settings_permissions_hint),
-                    fontSize = 13.sp,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
-            }
-        }
-
-        SmallTitle(
-            text = stringResource(R.string.settings_about),
-            modifier = Modifier.padding(horizontal = 24.dp),
-        )
-        SectionCard {
-            val context = LocalContext.current
-            val githubUrl = stringResource(R.string.github_url).trim()
-            Column(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text(
-                    text = stringResource(R.string.settings_version, BuildConfig.VERSION_NAME),
-                    fontSize = 13.sp,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
-                Text(
-                    text = stringResource(R.string.settings_github),
-                    fontWeight = FontWeight.Medium,
-                )
-                if (githubUrl.isBlank()) {
-                    Text(
-                        text = stringResource(R.string.settings_github_pending),
-                        fontSize = 13.sp,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    )
-                } else {
-                    Text(
-                        text = githubUrl,
-                        fontSize = 13.sp,
-                        color = Booth.Accent,
-                    )
-                    TextButton(
-                        text = stringResource(R.string.settings_github_open),
-                        onClick = {
-                            runCatching {
-                                context.startActivity(
-                                    Intent(Intent.ACTION_VIEW, Uri.parse(githubUrl)),
-                                )
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(28.dp))
-    }
-}
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
