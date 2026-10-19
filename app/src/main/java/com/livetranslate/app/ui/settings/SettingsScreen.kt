@@ -466,3 +466,44 @@ fun SettingsScreen(
         SectionCard {
             Column(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.settings_version, BuildConfig.VERSION_NAME),
+                    fontSize = 13.sp,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+                Text(
+                    text = stringResource(R.string.settings_github),
+                    fontWeight = FontWeight.Medium,
+                )
+                if (githubUrl.isBlank()) {
+                    Text(
+                        text = stringResource(R.string.settings_github_pending),
+                        fontSize = 13.sp,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                } else {
+                    Text(
+                        text = githubUrl,
+                        fontSize = 13.sp,
+                        color = Booth.Accent,
+                    )
+                    TextButton(
+                        text = stringResource(R.string.settings_github_open),
+                        onClick = {
+                            runCatching {
+                                context.startActivity(
+                                    Intent(Intent.ACTION_VIEW, Uri.parse(githubUrl)),
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(28.dp))
+    }
+}
