@@ -465,8 +465,32 @@ fun SettingsScreen(
         )
         SectionCard {
             Column(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
-verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                TextButton(
+                    text = stringResource(R.string.settings_open_overlay),
+                    onClick = onOpenOverlayPermission,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    text = stringResource(R.string.settings_permissions_hint),
+                    fontSize = 13.sp,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+            }
+        }
+
+        SmallTitle(
+            text = stringResource(R.string.settings_about),
+            modifier = Modifier.padding(horizontal = 24.dp),
+        )
+        SectionCard {
+            val context = LocalContext.current
+            val githubUrl = stringResource(R.string.github_url).trim()
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
                     text = stringResource(R.string.settings_version, BuildConfig.VERSION_NAME),
