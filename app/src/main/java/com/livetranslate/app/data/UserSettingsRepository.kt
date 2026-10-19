@@ -29,6 +29,7 @@ class UserSettingsRepository(private val context: Context) {
         val overlayWidthDp = intPreferencesKey("overlay_width_dp")
         val overlayHeightDp = intPreferencesKey("overlay_height_dp")
         val audioSourceMode = stringPreferencesKey("audio_source_mode")
+        val customPrompt = stringPreferencesKey("custom_prompt")
     }
 
     val settings: Flow<UserSettings> = context.dataStore.data.map { prefs ->
@@ -51,6 +52,7 @@ class UserSettingsRepository(private val context: Context) {
             prefs[Keys.overlayWidthDp] = next.overlayWidthDp
             prefs[Keys.overlayHeightDp] = next.overlayHeightDp
             prefs[Keys.audioSourceMode] = next.audioSourceMode.name
+            prefs[Keys.customPrompt] = next.customPrompt
         }
     }
 
@@ -81,5 +83,6 @@ class UserSettingsRepository(private val context: Context) {
         overlayWidthDp = this[Keys.overlayWidthDp] ?: UserSettings.Defaults.OVERLAY_WIDTH_DP,
         overlayHeightDp = this[Keys.overlayHeightDp] ?: UserSettings.Defaults.OVERLAY_HEIGHT_DP,
         audioSourceMode = AudioSourceMode.fromStorage(this[Keys.audioSourceMode]),
+        customPrompt = this[Keys.customPrompt] ?: UserSettings.Defaults.CUSTOM_PROMPT,
     )
 }
