@@ -19,6 +19,7 @@ data class UserSettings(
     val overlayWidthDp: Int = Defaults.OVERLAY_WIDTH_DP,
     val overlayHeightDp: Int = Defaults.OVERLAY_HEIGHT_DP,
     val audioSourceMode: AudioSourceMode = Defaults.AUDIO_SOURCE,
+    val customPrompt: String = Defaults.CUSTOM_PROMPT,
 ) {
     object Defaults {
         const val ENDPOINT =
@@ -34,6 +35,7 @@ data class UserSettings(
         const val OVERLAY_Y = -1
         const val OVERLAY_WIDTH_DP = 360
         const val OVERLAY_HEIGHT_DP = 120
+        const val CUSTOM_PROMPT = ""
         val AUDIO_SOURCE: AudioSourceMode = AudioSourceMode.MEDIA
     }
 }
