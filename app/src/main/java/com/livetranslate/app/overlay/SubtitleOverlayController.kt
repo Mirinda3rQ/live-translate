@@ -31,16 +31,21 @@ import android.widget.ScrollView
 import android.widget.TextView
 import com.livetranslate.app.R
 import com.livetranslate.app.data.UserSettings
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
  * Floating subtitle window using classic Views (reliable with WindowManager).
+ * - drag anywhere on the captions with one finger to move the window across
+ *   the whole screen (manual caption scrolling is off; captions auto-scroll)
+ * - pinch with two fingers to resize at any time: horizontal spread changes
+ *   width, vertical spread changes height (window centre stays put)
  * - top control strip (grabber + close button): shown for 5s on start, then
  *   collapses away (its space is freed too); tap anywhere on the captions —
- *   a real tap, not a scroll — to pop it back out; auto-hides after 5s idle
- * - corner arc handle to resize box only (font size unchanged)
+ *   a real tap, not a drag — to pop it back out; auto-hides after 5s idle
+ * - corner arc handle (large touch target) to resize box only (font unchanged)
  * - clamps size/position on orientation change so the handle never goes off-screen
  * - bilingual: source + divider + translation, each with independent auto-scroll
  * - translation-only: single auto-scrolling pane
@@ -65,6 +70,7 @@ class SubtitleOverlayController(
     private var container: LinearLayout? = null
     private var grabberRow: FrameLayout? = null
     private var closeButton: View? = null
+    private var resizeHandle: View? = null
 
     /** Top control strip (grabber + close): reveal on tap, auto-hide when idle. */
     private val controlsHandler = Handler(Looper.getMainLooper())
@@ -137,12 +143,17 @@ class SubtitleOverlayController(
             },
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                // Let the window reach every edge (status bar / nav bar areas).
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             this.x = x
             this.y = y
+            // Allow positioning into the camera-cutout strip too.
+            layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
         }
         layoutParams = params
 
@@ -212,6 +223,7 @@ class SubtitleOverlayController(
         container = null
         grabberRow = null
         closeButton = null
+        resizeHandle = null
         sameLanguageMode = false
         inputText = ""
         outputText = ""
@@ -388,8 +400,40 @@ class SubtitleOverlayController(
 
     private fun clampHeight(height: Int, screenH: Int): Int {
         val minH = min(MIN_HEIGHT_PX, screenH)
-        val maxH = max(minH, min(screenH / 2, screenH - EDGE_MARGIN_PX))
+        val maxH = max(minH, maxHeightPx(screenH))
         return safeCoerce(height, minH, maxH)
+    }
+
+    /** Tallest the box may get: most of the screen (was half the screen). */
+    private fun maxHeightPx(screenH: Int): Int =
+        min((screenH * MAX_HEIGHT_FRACTION).roundToInt(), screenH - EDGE_MARGIN_PX)
+
+    /** Move the whole window by a delta, kept fully on screen. */
+    private fun dragWindowBy(dx: Int, dy: Int) {
+        val params = layoutParams ?: return
+        val root = rootView ?: return
+        val (screenW, screenH, _) = screenMetrics()
+        params.width = clampWidth(params.width, screenW)
+        params.height = clampHeight(params.height, screenH)
+        params.x = safeCoerce(params.x + dx, 0, max(0, screenW - params.width))
+        params.y = safeCoerce(params.y + dy, 0, max(0, screenH - params.height))
+        runCatching { windowManager.updateViewLayout(root, params) }
+            .onFailure { Log.e(TAG, "drag updateViewLayout failed", it) }
+    }
+
+    /** Resize the window to [w]x[h] keeping its centre at ([cx], [cy]). */
+    private fun resizeWindowAround(cx: Float, cy: Float, w: Int, h: Int) {
+        val params = layoutParams ?: return
+        val root = rootView ?: return
+        val (screenW, screenH, _) = screenMetrics()
+        val newW = clampWidth(w, screenW)
+        val newH = clampHeight(h, screenH)
+        params.width = newW
+        params.height = newH
+        params.x = safeCoerce((cx - newW / 2f).roundToInt(), 0, max(0, screenW - newW))
+        params.y = safeCoerce((cy - newH / 2f).roundToInt(), 0, max(0, screenH - newH))
+        runCatching { windowManager.updateViewLayout(root, params) }
+            .onFailure { Log.e(TAG, "pinch updateViewLayout failed", it) }
     }
 
     private fun safeCoerce(value: Int, start: Int, end: Int): Int {
@@ -411,10 +455,10 @@ class SubtitleOverlayController(
 
     @SuppressLint("ClickableViewAccessibility")
     private fun buildOverlayView(density: Float): View {
-        // Root detects taps anywhere in the window (including areas the caption
-        // ScrollViews consume) so the control strip toggles with a tap, while
-        // scrolls/drags still pass through untouched.
-        val root = TapDetectLayout(context) { onOverlayTapped() }
+        // Root owns every touch that doesn't start on the grabber strip or the
+        // resize handle: tap toggles the control strip, one-finger drag moves
+        // the window, two-finger pinch resizes it.
+        val root = GestureLayout(context)
 
         val bg = GradientDrawable().apply {
             cornerRadius = 12 * density
@@ -575,7 +619,7 @@ class SubtitleOverlayController(
 
         // Resize handle: a short arc hugging the window's bottom-right corner
         // radius. Larger touch target than the visible arc.
-        val handleSize = (22 * density).roundToInt()
+        val handleSize = (40 * density).roundToInt()
         val handle = ArcHandleView(context).apply {
             layoutParams = FrameLayout.LayoutParams(
                 handleSize,
@@ -590,47 +634,186 @@ class SubtitleOverlayController(
         }
         handle.setOnTouchListener(ResizeTouchListener())
         root.addView(handle)
+        resizeHandle = handle
 
         applyLayoutMode()
         return root
     }
 
     /**
-     * Root container that reports real taps anywhere in the window. Watching at
-     * the dispatch level (instead of click listeners) means taps still register
-     * on areas consumed by the caption ScrollViews, while scrolls and drags —
-     * anything moving past the touch slop — never trigger the reveal.
+     * Root container that turns touches on the captions into gestures:
+     * - quick tap (no movement)      → toggle the control strip
+     * - one-finger drag              → move the window anywhere on screen
+     * - two-finger pinch/spread      → resize (x-span → width, y-span → height)
+     *
+     * Touches that start on the grabber strip or the resize handle are left to
+     * those views (they have their own drag logic). All distances use raw
+     * (screen) coordinates, because the window itself moves under the finger.
      */
-    private class TapDetectLayout(
-        context: Context,
-        private val onSingleTap: () -> Unit,
-    ) : FrameLayout(context) {
-        private var downX = 0f
-        private var downY = 0f
-        private var downAt = 0L
+    private inner class GestureLayout(context: Context) : FrameLayout(context) {
         private val slop = ViewConfiguration.get(context).scaledTouchSlop
+        private val loc = IntArray(2)
+
+        private var passThrough = false
+        private var tapCandidate = false
+        private var moved = false
+        private var downRawX = 0f
+        private var downRawY = 0f
+        private var downAt = 0L
+        private var lastRawX = 0f
+        private var lastRawY = 0f
+
+        private var pinching = false
+        private var startSpanX = 0f
+        private var startSpanY = 0f
+        private var startW = 0
+        private var startH = 0
+        private var centerX = 0f
+        private var centerY = 0f
 
         override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    downX = ev.x
-                    downY = ev.y
+                    downRawX = ev.rawX
+                    downRawY = ev.rawY
                     downAt = SystemClock.uptimeMillis()
+                    tapCandidate = true
+                    moved = false
+                    pinching = false
                 }
-                MotionEvent.ACTION_UP -> {
-                    val dx = ev.x - downX
-                    val dy = ev.y - downY
-                    val quick = SystemClock.uptimeMillis() - downAt <= TAP_TIMEOUT_MS
-                    if (quick && dx * dx + dy * dy <= slop * slop) {
-                        onSingleTap()
+                MotionEvent.ACTION_POINTER_DOWN -> tapCandidate = false
+                MotionEvent.ACTION_MOVE -> {
+                    if (tapCandidate && ev.pointerCount == 1) {
+                        val dx = ev.rawX - downRawX
+                        val dy = ev.rawY - downRawY
+                        if (dx * dx + dy * dy > slop * slop) tapCandidate = false
                     }
                 }
+                MotionEvent.ACTION_UP -> {
+                    val quick = SystemClock.uptimeMillis() - downAt <= TAP_TIMEOUT_MS
+                    if (tapCandidate && quick && !moved && !pinching) onOverlayTapped()
+                    tapCandidate = false
+                }
+                MotionEvent.ACTION_CANCEL -> tapCandidate = false
             }
-            return super.dispatchTouchEvent(ev)
+            val handled = super.dispatchTouchEvent(ev)
+            if (ev.actionMasked == MotionEvent.ACTION_UP ||
+                ev.actionMasked == MotionEvent.ACTION_CANCEL
+            ) {
+                // A suppress flag set by grabber/handle must not leak into the
+                // next, unrelated tap (a drag there never reaches onOverlayTapped).
+                suppressNextToggle = false
+            }
+            return handled
         }
 
-        companion object {
-            private const val TAP_TIMEOUT_MS = 400L
+        override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+            if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+                passThrough = hitsInteractive(ev.rawX, ev.rawY)
+            }
+            // Take over everything except touches owned by grabber / handle.
+            return !passThrough
+        }
+
+        @SuppressLint("ClickableViewAccessibility")
+        override fun onTouchEvent(ev: MotionEvent): Boolean {
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    lastRawX = ev.rawX
+                    lastRawY = ev.rawY
+                    return true
+                }
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    if (ev.pointerCount == 2) beginPinch(ev)
+                    return true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (pinching && ev.pointerCount >= 2) {
+                        val spanX = abs(ev.getRawX(0) - ev.getRawX(1))
+                        val spanY = abs(ev.getRawY(0) - ev.getRawY(1))
+                        resizeWindowAround(
+                            centerX,
+                            centerY,
+                            startW + ((spanX - startSpanX) * PINCH_GAIN).roundToInt(),
+                            startH + ((spanY - startSpanY) * PINCH_GAIN).roundToInt(),
+                        )
+                    } else if (!pinching && ev.pointerCount == 1) {
+                        if (!moved) {
+                            val dx = ev.rawX - downRawX
+                            val dy = ev.rawY - downRawY
+                            if (dx * dx + dy * dy > slop * slop) {
+                                moved = true
+                                // Start from here so the window doesn't jump.
+                                lastRawX = ev.rawX
+                                lastRawY = ev.rawY
+                            }
+                        } else {
+                            dragWindowBy(
+                                (ev.rawX - lastRawX).roundToInt(),
+                                (ev.rawY - lastRawY).roundToInt(),
+                            )
+                            lastRawX = ev.rawX
+                            lastRawY = ev.rawY
+                        }
+                    }
+                    return true
+                }
+                MotionEvent.ACTION_POINTER_UP -> {
+                    if (pinching) {
+                        pinching = false
+                        moved = true
+                        // Carry on as a drag with the finger that stays down.
+                        val remaining = if (ev.actionIndex == 0) 1 else 0
+                        if (remaining < ev.pointerCount) {
+                            lastRawX = ev.getRawX(remaining)
+                            lastRawY = ev.getRawY(remaining)
+                        }
+                    }
+                    return true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (moved || pinching) {
+                        pinching = false
+                        clampAndApply(persist = true, reason = "gesture-up")
+                        // Persist once per gesture; writing on MOVE fights the drag.
+                        persistGeometry()
+                        if (controlsShown) scheduleControlsHide()
+                    }
+                    return true
+                }
+            }
+            return super.onTouchEvent(ev)
+        }
+
+        private fun beginPinch(ev: MotionEvent) {
+            pinching = true
+            moved = true
+            tapCandidate = false
+            startSpanX = abs(ev.getRawX(0) - ev.getRawX(1))
+            startSpanY = abs(ev.getRawY(0) - ev.getRawY(1))
+            val lp = this@SubtitleOverlayController.layoutParams ?: return
+            startW = lp.width
+            startH = lp.height
+            centerX = lp.x + lp.width / 2f
+            centerY = lp.y + lp.height / 2f
+        }
+
+        private fun hitsInteractive(rawX: Float, rawY: Float): Boolean {
+            if (hits(resizeHandle, rawX, rawY)) return true
+            val row = grabberRow
+            if (row != null && controlsShown && row.visibility == View.VISIBLE &&
+                row.isEnabled && hits(row, rawX, rawY)
+            ) {
+                return true
+            }
+            return false
+        }
+
+        private fun hits(v: View?, rawX: Float, rawY: Float): Boolean {
+            if (v == null || v.visibility != View.VISIBLE) return false
+            v.getLocationOnScreen(loc)
+            return rawX >= loc[0] && rawX <= loc[0] + v.width &&
+                rawY >= loc[1] && rawY <= loc[1] + v.height
         }
     }
 
@@ -863,7 +1046,7 @@ class SubtitleOverlayController(
                         val maxW = max(MIN_WIDTH_PX, screenW - params.x - EDGE_MARGIN_PX)
                         val maxH = max(
                             MIN_HEIGHT_PX,
-                            min(screenH / 2, screenH - params.y - EDGE_MARGIN_PX),
+                            min(maxHeightPx(screenH), screenH - params.y - EDGE_MARGIN_PX),
                         )
                         params.width = safeCoerce(params.width + dx.roundToInt(), MIN_WIDTH_PX, maxW)
                         params.height = safeCoerce(params.height + dy.roundToInt(), MIN_HEIGHT_PX, maxH)
@@ -898,6 +1081,9 @@ class SubtitleOverlayController(
         private const val MIN_WIDTH_PX = 200
         private const val MIN_HEIGHT_PX = 80
         private const val EDGE_MARGIN_PX = 8
+        private const val MAX_HEIGHT_FRACTION = 0.85f
+        private const val PINCH_GAIN = 1.2f
+        private const val TAP_TIMEOUT_MS = 400L
         private const val CONTROLS_AUTO_HIDE_MS = 5_000L
 
         /**
