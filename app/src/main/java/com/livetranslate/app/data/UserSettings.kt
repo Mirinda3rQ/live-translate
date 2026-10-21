@@ -3,7 +3,7 @@ package com.livetranslate.app.data
 /**
  * All user-facing settings that are safe to put in DataStore (not the API key).
  *
- * Live Translate has no source-language field; only [targetLanguageCode] is sent.
+ * Live API auto-detects source language; the optional text test mode can pin its on-device ASR locale.
  */
 data class UserSettings(
     val endpoint: String = Defaults.ENDPOINT,
@@ -19,6 +19,9 @@ data class UserSettings(
     val overlayWidthDp: Int = Defaults.OVERLAY_WIDTH_DP,
     val overlayHeightDp: Int = Defaults.OVERLAY_HEIGHT_DP,
     val audioSourceMode: AudioSourceMode = Defaults.AUDIO_SOURCE,
+    val geminiFlashTestMode: Boolean = Defaults.GEMINI_FLASH_TEST_MODE,
+    val geminiFlashSourceLanguage: String = Defaults.GEMINI_FLASH_SOURCE_LANGUAGE,
+    val geminiFlashSystemInstructions: String = Defaults.GEMINI_FLASH_SYSTEM_INSTRUCTIONS,
     val customPrompt: String = Defaults.CUSTOM_PROMPT,
 ) {
     object Defaults {
@@ -30,6 +33,12 @@ data class UserSettings(
         const val BACKGROUND_ALPHA = 0.65f
         const val BILINGUAL = false
         const val PLAY_TRANSLATED_AUDIO = false
+        const val GEMINI_FLASH_TEST_MODE = false
+        const val GEMINI_FLASH_SOURCE_LANGUAGE = "ja-JP"
+        const val GEMINI_FLASH_SOURCE_LANGUAGE_JAPANESE = "ja-JP"
+        const val GEMINI_FLASH_SOURCE_LANGUAGE_CHINESE = "zh-CN"
+        const val GEMINI_FLASH_SYSTEM_INSTRUCTIONS =
+            "Translate the selected source-language speech into natural, faithful Thai subtitles. Preserve the original meaning, names, numbers, and tone. Keep the translation concise. Return only the Thai translation, with no explanations or quotation marks."
         const val TRANSLATED_VOLUME = 0.8f
         const val OVERLAY_X = 24
         const val OVERLAY_Y = -1
