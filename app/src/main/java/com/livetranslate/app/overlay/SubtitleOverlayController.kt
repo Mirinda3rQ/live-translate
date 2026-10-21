@@ -46,7 +46,7 @@ import kotlin.math.roundToInt
  *   collapses away (its space is freed too); tap anywhere on the captions —
  *   a real tap, not a drag — to pop it back out; auto-hides after 5s idle
  * - corner arc handle (large touch target) to resize box only (font unchanged)
- * - clamps size/position on orientation change so the handle never goes off-screen
+ * - clamps size on orientation change while preserving the user's position
  * - bilingual: source + divider + translation, each with independent auto-scroll
  * - translation-only: single auto-scrolling pane
  * - same-language (input already equals target): force a single pane even if
@@ -124,12 +124,12 @@ class SubtitleOverlayController(
         val x = if (initial.overlayX < 0) {
             ((screenW - widthPx) / 2).coerceAtLeast(0)
         } else {
-            safeCoerce(initial.overlayX, 0, max(0, screenW - widthPx))
+            initial.overlayX
         }
         val y = if (initial.overlayY < 0) {
             (screenH * 0.72f).roundToInt().let { safeCoerce(it, 0, max(0, screenH - heightPx)) }
         } else {
-            safeCoerce(initial.overlayY, 0, max(0, screenH - heightPx))
+            initial.overlayY
         }
 
         val params = WindowManager.LayoutParams(
@@ -357,8 +357,6 @@ class SubtitleOverlayController(
 
         params.width = clampWidth(params.width, screenW)
         params.height = clampHeight(params.height, screenH)
-        params.x = safeCoerce(params.x, 0, max(0, screenW - params.width))
-        params.y = safeCoerce(params.y, 0, max(0, screenH - params.height))
 
         val changed = params.width != oldW || params.height != oldH ||
             params.x != oldX || params.y != oldY || screenChanged
@@ -408,15 +406,15 @@ class SubtitleOverlayController(
     private fun maxHeightPx(screenH: Int): Int =
         min((screenH * MAX_HEIGHT_FRACTION).roundToInt(), screenH - EDGE_MARGIN_PX)
 
-    /** Move the whole window by a delta, kept fully on screen. */
+    /** Move the whole window by a delta without position clamping. */
     private fun dragWindowBy(dx: Int, dy: Int) {
         val params = layoutParams ?: return
         val root = rootView ?: return
         val (screenW, screenH, _) = screenMetrics()
         params.width = clampWidth(params.width, screenW)
         params.height = clampHeight(params.height, screenH)
-        params.x = safeCoerce(params.x + dx, 0, max(0, screenW - params.width))
-        params.y = safeCoerce(params.y + dy, 0, max(0, screenH - params.height))
+        params.x += dx
+        params.y += dy
         runCatching { windowManager.updateViewLayout(root, params) }
             .onFailure { Log.e(TAG, "drag updateViewLayout failed", it) }
     }
@@ -430,8 +428,8 @@ class SubtitleOverlayController(
         val newH = clampHeight(h, screenH)
         params.width = newW
         params.height = newH
-        params.x = safeCoerce((cx - newW / 2f).roundToInt(), 0, max(0, screenW - newW))
-        params.y = safeCoerce((cy - newH / 2f).roundToInt(), 0, max(0, screenH - newH))
+        params.x = (cx - newW / 2f).roundToInt()
+        params.y = (cy - newH / 2f).roundToInt()
         runCatching { windowManager.updateViewLayout(root, params) }
             .onFailure { Log.e(TAG, "pinch updateViewLayout failed", it) }
     }
@@ -989,16 +987,8 @@ class SubtitleOverlayController(
                         val (screenW, screenH, _) = screenMetrics()
                         params.width = clampWidth(params.width, screenW)
                         params.height = clampHeight(params.height, screenH)
-                        params.x = safeCoerce(
-                            params.x + dx.roundToInt(),
-                            0,
-                            max(0, screenW - params.width),
-                        )
-                        params.y = safeCoerce(
-                            params.y + dy.roundToInt(),
-                            0,
-                            max(0, screenH - params.height),
-                        )
+                        params.x += dx.roundToInt()
+                        params.y += dy.roundToInt()
                         windowManager.updateViewLayout(root, params)
                         true
                     }
@@ -1043,15 +1033,8 @@ class SubtitleOverlayController(
                         lastX = event.rawX
                         lastY = event.rawY
                         val (screenW, screenH, _) = screenMetrics()
-                        val maxW = max(MIN_WIDTH_PX, screenW - params.x - EDGE_MARGIN_PX)
-                        val maxH = max(
-                            MIN_HEIGHT_PX,
-                            min(maxHeightPx(screenH), screenH - params.y - EDGE_MARGIN_PX),
-                        )
-                        params.width = safeCoerce(params.width + dx.roundToInt(), MIN_WIDTH_PX, maxW)
-                        params.height = safeCoerce(params.height + dy.roundToInt(), MIN_HEIGHT_PX, maxH)
-                        params.x = safeCoerce(params.x, 0, max(0, screenW - params.width))
-                        params.y = safeCoerce(params.y, 0, max(0, screenH - params.height))
+                        params.width = clampWidth(params.width + dx.roundToInt(), screenW)
+                        params.height = clampHeight(params.height + dy.roundToInt(), screenH)
                         windowManager.updateViewLayout(root, params)
                         true
                     }
