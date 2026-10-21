@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -24,6 +25,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.RadioButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -46,6 +48,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.livetranslate.app.BuildConfig
 import com.livetranslate.app.R
 import com.livetranslate.app.data.ApiKeyStore
+import com.livetranslate.app.data.UserSettings
 import com.livetranslate.app.ui.components.PageTitle
 import com.livetranslate.app.ui.components.SectionCard
 import com.livetranslate.app.ui.components.SettingSwitchRow
@@ -78,6 +81,8 @@ fun SettingsScreen(
     var revealKey by remember { mutableStateOf(false) }
     var showPromptDialog by remember { mutableStateOf(false) }
     var promptDraft by remember { mutableStateOf("") }
+    var showFlashPromptDialog by remember { mutableStateOf(false) }
+    var flashPromptDraft by remember { mutableStateOf("") }
 
     var endpointHydrated by remember { mutableStateOf(false) }
     var modelHydrated by remember { mutableStateOf(false) }
@@ -156,6 +161,64 @@ fun SettingsScreen(
                     TextButton(
                         text = "ยกเลิก",
                         onClick = { showPromptDialog = false },
+                    )
+                }
+            },
+        )
+    }
+
+    if (showFlashPromptDialog) {
+        AlertDialog(
+            onDismissRequest = { showFlashPromptDialog = false },
+            containerColor = scheme.surface,
+            titleContentColor = scheme.onSurface,
+            textContentColor = scheme.onSurface,
+            title = { androidx.compose.material3.Text(stringResource(R.string.settings_flash_prompt)) },
+            text = {
+                OutlinedTextField(
+                    value = flashPromptDraft,
+                    onValueChange = { flashPromptDraft = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 5,
+                    maxLines = 10,
+                    placeholder = {
+                        androidx.compose.material3.Text(
+                            stringResource(R.string.settings_flash_prompt_placeholder),
+                        )
+                    },
+                    shape = RoundedCornerShape(16.dp),
+                    colors = fieldColors,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    text = stringResource(R.string.settings_flash_prompt_save),
+                    onClick = {
+                        val value = flashPromptDraft.trim().ifBlank {
+                            com.livetranslate.app.data.UserSettings.Defaults.GEMINI_FLASH_SYSTEM_INSTRUCTIONS
+                        }
+                        viewModel.update { it.copy(geminiFlashSystemInstructions = value) }
+                        showFlashPromptDialog = false
+                    },
+                )
+            },
+            dismissButton = {
+                Row {
+                    TextButton(
+                        text = stringResource(R.string.settings_flash_prompt_reset),
+                        onClick = {
+                            viewModel.update {
+                                it.copy(
+                                    geminiFlashSystemInstructions =
+                                        com.livetranslate.app.data.UserSettings.Defaults.GEMINI_FLASH_SYSTEM_INSTRUCTIONS,
+                                )
+                            }
+                            showFlashPromptDialog = false
+                        },
+                    )
+                    TextButton(
+                        text = stringResource(R.string.settings_flash_prompt_cancel),
+                        onClick = { showFlashPromptDialog = false },
                     )
                 }
             },
@@ -317,6 +380,97 @@ fun SettingsScreen(
                             hasFail && !hasOk -> Booth.Danger
                             else -> MiuixTheme.colorScheme.onSurface.copy(alpha = 0.85f)
                         },
+                    )
+                }
+            }
+        }
+
+        SmallTitle(
+            text = stringResource(R.string.settings_gemini_flash_test),
+            modifier = Modifier.padding(horizontal = 24.dp),
+        )
+        SectionCard {
+            SettingSwitchRow(
+                title = stringResource(R.string.settings_gemini_flash_test),
+                summary = stringResource(R.string.settings_gemini_flash_test_summary),
+                checked = settings.geminiFlashTestMode,
+                onCheckedChange = { enabled ->
+                    viewModel.update { it.copy(geminiFlashTestMode = enabled) }
+                },
+            )
+        }
+
+        SmallTitle(
+            text = stringResource(R.string.settings_flash_source_language),
+            modifier = Modifier.padding(horizontal = 24.dp),
+        )
+        SectionCard {
+            Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                listOf(
+                    UserSettings.Defaults.GEMINI_FLASH_SOURCE_LANGUAGE_JAPANESE to
+                        R.string.gemini_flash_source_japanese,
+                    UserSettings.Defaults.GEMINI_FLASH_SOURCE_LANGUAGE_CHINESE to
+                        R.string.gemini_flash_source_chinese,
+                ).forEach { (locale, labelRes) ->
+                    val selected = settings.geminiFlashSourceLanguage == locale
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                viewModel.update { it.copy(geminiFlashSourceLanguage = locale) }
+                            }
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = selected, onClick = null)
+                        Text(
+                            text = stringResource(labelRes),
+                            modifier = Modifier.padding(start = 10.dp),
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                            color = if (selected) Booth.Accent else MiuixTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+                Text(
+                    text = stringResource(R.string.settings_flash_source_language_summary),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    fontSize = 12.sp,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+            }
+        }
+
+        SmallTitle(
+            text = stringResource(R.string.settings_flash_prompt),
+            modifier = Modifier.padding(horizontal = 24.dp),
+        )
+        SectionCard {
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = settings.geminiFlashSystemInstructions,
+                    fontSize = 13.sp,
+                    maxLines = 5,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+                Text(
+                    text = stringResource(R.string.settings_flash_prompt_summary),
+                    fontSize = 12.sp,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+                Button(
+                    onClick = {
+                        flashPromptDraft = settings.geminiFlashSystemInstructions
+                        showFlashPromptDialog = true
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColorsPrimary(),
+                ) {
+                    Text(
+                        text = stringResource(R.string.settings_flash_prompt_edit),
+                        fontWeight = FontWeight.SemiBold,
                     )
                 }
             }
