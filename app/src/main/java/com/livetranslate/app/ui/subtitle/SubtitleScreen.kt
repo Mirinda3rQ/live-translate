@@ -85,7 +85,19 @@ fun SubtitleScreen(
     ) {
         PageTitle(
             title = stringResource(R.string.subtitle_title),
-            subtitle = stringResource(R.string.subtitle_subtitle),
+            subtitle = stringResource(
+                if (settings.geminiFlashTestMode) {
+                    if (settings.geminiFlashSourceLanguage ==
+                        UserSettings.Defaults.GEMINI_FLASH_SOURCE_LANGUAGE_CHINESE
+                    ) {
+                        R.string.subtitle_gemini_flash_subtitle_zh
+                    } else {
+                        R.string.subtitle_gemini_flash_subtitle_ja
+                    }
+                } else {
+                    R.string.subtitle_subtitle
+                },
+            ),
         )
 
         SectionCard {
@@ -159,53 +171,72 @@ fun SubtitleScreen(
             }
         }
 
-        SmallTitle(
-            text = stringResource(R.string.subtitle_language),
-            modifier = Modifier.padding(horizontal = 24.dp),
-        )
-        SectionCard {
-            Column(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                LanguageChip(
-                    title = stringResource(R.string.subtitle_target),
-                    value = stringResource(SupportedLanguages.labelResOf(settings.targetLanguageCode)),
-                    onClick = { showTargetPicker = true },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+        if (settings.geminiFlashTestMode) {
+            SectionCard {
                 Text(
-                    text = stringResource(R.string.subtitle_target_hint),
-                    fontSize = 12.sp,
+                    text = stringResource(
+                        if (settings.geminiFlashSourceLanguage ==
+                            UserSettings.Defaults.GEMINI_FLASH_SOURCE_LANGUAGE_CHINESE
+                        ) {
+                            R.string.subtitle_gemini_flash_input_hint_zh
+                        } else {
+                            R.string.subtitle_gemini_flash_input_hint_ja
+                        },
+                    ),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    fontSize = 13.sp,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 )
             }
-        }
+        } else {
+            SmallTitle(
+                text = stringResource(R.string.subtitle_language),
+                modifier = Modifier.padding(horizontal = 24.dp),
+            )
+            SectionCard {
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    LanguageChip(
+                        title = stringResource(R.string.subtitle_target),
+                        value = stringResource(SupportedLanguages.labelResOf(settings.targetLanguageCode)),
+                        onClick = { showTargetPicker = true },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        text = stringResource(R.string.subtitle_target_hint),
+                        fontSize = 12.sp,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                }
+            }
 
-        SmallTitle(
-            text = stringResource(R.string.subtitle_audio_source),
-            modifier = Modifier.padding(horizontal = 24.dp),
-        )
-        SectionCard {
-            Column(modifier = Modifier.padding(vertical = 6.dp)) {
-                AudioSourceRow(
-                    label = stringResource(R.string.audio_source_media),
-                    selected = settings.audioSourceMode == AudioSourceMode.MEDIA,
-                    enabled = !running,
-                    onClick = { onAudioSource(AudioSourceMode.MEDIA) },
-                )
-                AudioSourceRow(
-                    label = stringResource(R.string.audio_source_mic),
-                    selected = settings.audioSourceMode == AudioSourceMode.MIC,
-                    enabled = !running,
-                    onClick = { onAudioSource(AudioSourceMode.MIC) },
-                )
-                AudioSourceRow(
-                    label = stringResource(R.string.audio_source_both),
-                    selected = settings.audioSourceMode == AudioSourceMode.MEDIA_AND_MIC,
-                    enabled = !running,
-                    onClick = { onAudioSource(AudioSourceMode.MEDIA_AND_MIC) },
-                )
+            SmallTitle(
+                text = stringResource(R.string.subtitle_audio_source),
+                modifier = Modifier.padding(horizontal = 24.dp),
+            )
+            SectionCard {
+                Column(modifier = Modifier.padding(vertical = 6.dp)) {
+                    AudioSourceRow(
+                        label = stringResource(R.string.audio_source_media),
+                        selected = settings.audioSourceMode == AudioSourceMode.MEDIA,
+                        enabled = !running,
+                        onClick = { onAudioSource(AudioSourceMode.MEDIA) },
+                    )
+                    AudioSourceRow(
+                        label = stringResource(R.string.audio_source_mic),
+                        selected = settings.audioSourceMode == AudioSourceMode.MIC,
+                        enabled = !running,
+                        onClick = { onAudioSource(AudioSourceMode.MIC) },
+                    )
+                    AudioSourceRow(
+                        label = stringResource(R.string.audio_source_both),
+                        selected = settings.audioSourceMode == AudioSourceMode.MEDIA_AND_MIC,
+                        enabled = !running,
+                        onClick = { onAudioSource(AudioSourceMode.MEDIA_AND_MIC) },
+                    )
+                }
             }
         }
 
