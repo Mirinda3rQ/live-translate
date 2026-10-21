@@ -28,6 +28,8 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.SeekBar
+import android.widget.Switch
 import android.widget.TextView
 import com.livetranslate.app.R
 import com.livetranslate.app.data.UserSettings
@@ -55,6 +57,7 @@ import kotlin.math.roundToInt
 class SubtitleOverlayController(
     private val context: Context,
     private val onGeometryChanged: (x: Int, y: Int, widthDp: Int, heightDp: Int) -> Unit,
+    private val onSettingsChanged: ((UserSettings) -> UserSettings) -> Unit = {},
     private val onCloseRequested: () -> Unit = {},
 ) {
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -70,6 +73,22 @@ class SubtitleOverlayController(
     private var container: LinearLayout? = null
     private var grabberRow: FrameLayout? = null
     private var closeButton: View? = null
+    private var settingsButton: View? = null
+    private var captionsToggleButton: TextView? = null
+    private var settingsPanel: LinearLayout? = null
+    private var fontSlider: SeekBar? = null
+    private var backgroundSlider: SeekBar? = null
+    private var volumeSlider: SeekBar? = null
+    private var bilingualToggle: Switch? = null
+    private var voiceToggle: Switch? = null
+    private var syncingPanelControls = false
+    private var settingsPanelOpen = false
+    private var captionsVisible = true
+    private var heightBeforeSettingsPx = 0
+    private var yBeforeSettingsPx = 0
+    private var xAtSettingsOpenPx = 0
+    private var adjustedYAtSettingsOpenPx = 0
+    private var settingsPanelAddedPx = 0
     private var resizeHandle: View? = null
 
     /** Top control strip (grabber + close): reveal on tap, auto-hide when idle. */
@@ -172,6 +191,13 @@ class SubtitleOverlayController(
         val bilingualChanged = value.bilingual != settings.bilingual
         val fontChanged = value.fontSizeSp != settings.fontSizeSp
         settings = value
+        syncingPanelControls = true
+        fontSlider?.progress = (value.fontSizeSp.toInt() - 12).coerceIn(0, 20)
+        backgroundSlider?.progress = (value.backgroundAlpha * 100).toInt().coerceIn(0, 95)
+        volumeSlider?.progress = (value.translatedVolume * 100).toInt().coerceIn(0, 200)
+        bilingualToggle?.isChecked = value.bilingual
+        voiceToggle?.isChecked = value.playTranslatedAudio
+        syncingPanelControls = false
         applySettingsToViews()
         applyLayoutMode()
         if (bilingualChanged || fontChanged) {
@@ -207,6 +233,7 @@ class SubtitleOverlayController(
         unregisterCallbacks()
         controlsHandler.removeCallbacksAndMessages(null)
         controlsShown = false
+        settingsPanelOpen = false
         rowAnimator?.cancel()
         rowAnimator = null
         grabberRow?.animate()?.cancel()
@@ -223,8 +250,17 @@ class SubtitleOverlayController(
         container = null
         grabberRow = null
         closeButton = null
+        settingsButton = null
+        captionsToggleButton = null
+        settingsPanel = null
+        fontSlider = null
+        backgroundSlider = null
+        volumeSlider = null
+        bilingualToggle = null
+        voiceToggle = null
         resizeHandle = null
         sameLanguageMode = false
+        captionsVisible = true
         inputText = ""
         outputText = ""
         lastInputLineCount = 0
@@ -298,6 +334,7 @@ class SubtitleOverlayController(
     }
 
     private fun scheduleControlsHide() {
+        if (settingsPanelOpen) return
         controlsHandler.removeCallbacks(hideControlsRunnable)
         controlsHandler.postDelayed(hideControlsRunnable, CONTROLS_AUTO_HIDE_MS)
     }
@@ -311,6 +348,7 @@ class SubtitleOverlayController(
     private val hideControlsRunnable = Runnable { hideControlsNow() }
 
     private fun hideControlsNow() {
+        if (settingsPanelOpen) return
         val row = grabberRow ?: return
         controlsShown = false
         cancelRowAnimations(row)
@@ -428,6 +466,9 @@ class SubtitleOverlayController(
         val newH = clampHeight(h, screenH)
         params.width = newW
         params.height = newH
+        if (settingsPanelOpen) {
+            heightBeforeSettingsPx = (newH - settingsPanelAddedPx).coerceAtLeast(MIN_HEIGHT_PX)
+        }
         params.x = (cx - newW / 2f).roundToInt()
         params.y = (cy - newH / 2f).roundToInt()
         runCatching { windowManager.updateViewLayout(root, params) }
@@ -518,10 +559,50 @@ class SubtitleOverlayController(
             }
         }
         closeButton = close
+        val gear = TextView(context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                (34 * density).roundToInt(), rowHeight,
+                Gravity.END or Gravity.CENTER_VERTICAL,
+            ).apply { rightMargin = (27 * density).roundToInt() }
+            text = "SET"
+            textSize = 10f
+            setTextColor(Color.argb(210, 255, 255, 255))
+            gravity = Gravity.CENTER
+            contentDescription = "Subtitle settings"
+            setOnClickListener {
+                suppressNextToggle = true
+                toggleSettingsPanel(density)
+            }
+        }
+        settingsButton = gear
+        grabberRow.addView(gear)
+        val captionsToggle = TextView(context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                (44 * density).roundToInt(), rowHeight,
+                Gravity.END or Gravity.CENTER_VERTICAL,
+            ).apply { rightMargin = (63 * density).roundToInt() }
+            text = "HIDE"
+            textSize = 9f
+            setTextColor(Color.argb(210, 255, 255, 255))
+            gravity = Gravity.CENTER
+            contentDescription = "Hide subtitles"
+            setOnClickListener {
+                captionsVisible = !captionsVisible
+                text = if (captionsVisible) "HIDE" else "SHOW"
+                contentDescription = if (captionsVisible) "Hide subtitles" else "Show subtitles"
+                applyLayoutMode()
+            }
+        }
+        captionsToggleButton = captionsToggle
+        grabberRow.addView(captionsToggle)
         grabberRow.addView(close)
 
         grabberRow.setOnTouchListener(MoveTouchListener())
         column.addView(grabberRow)
+
+        val panel = buildSettingsPanel(density)
+        settingsPanel = panel
+        column.addView(panel)
 
         // ---- Source pane (bilingual only) ----
         val sourceSection = LinearLayout(context).apply {
@@ -638,6 +719,135 @@ class SubtitleOverlayController(
         return root
     }
 
+    private fun buildSettingsPanel(density: Float): LinearLayout {
+        val panel = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setPadding((10 * density).roundToInt(), (4 * density).roundToInt(),
+                (10 * density).roundToInt(), (4 * density).roundToInt())
+            background = GradientDrawable().apply {
+                cornerRadius = 8 * density
+                setColor(Color.argb(235, 28, 28, 28))
+            }
+            isClickable = true
+        }
+        fun addSlider(label: String, initialProgress: Int, maxProgress: Int, valueText: (Int) -> String,
+                      toSettings: (UserSettings, Int) -> UserSettings) {
+            val line = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            val title = TextView(context).apply {
+                setTextColor(Color.WHITE)
+                textSize = 11f
+                text = "$label ${valueText(initialProgress)}"
+                layoutParams = LinearLayout.LayoutParams((110 * density).roundToInt(),
+                    LinearLayout.LayoutParams.WRAP_CONTENT)
+            }
+            val slider = SeekBar(context).apply {
+                max = maxProgress
+                progress = initialProgress
+                layoutParams = LinearLayout.LayoutParams(0, (34 * density).roundToInt(), 1f)
+                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                        title.text = "$label ${valueText(progress)}"
+                    }
+                    override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+                    override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                        onSettingsChanged { current -> toSettings(current, seekBar?.progress ?: initialProgress) }
+                    }
+                })
+            }
+            line.addView(title)
+            line.addView(slider)
+            panel.addView(line)
+        }
+        addSlider("Font", (settings.fontSizeSp.toInt() - 12).coerceIn(0, 20), 20,
+            { "${it + 12} sp" }) { current, progress -> current.copy(fontSizeSp = (progress + 12).toFloat()) }
+        fontSlider = (panel.getChildAt(panel.childCount - 1) as LinearLayout).getChildAt(1) as SeekBar
+        addSlider("Background", (settings.backgroundAlpha * 100).toInt().coerceIn(0, 95), 95,
+            { "$it%" }) { current, progress -> current.copy(backgroundAlpha = progress / 100f) }
+        backgroundSlider = (panel.getChildAt(panel.childCount - 1) as LinearLayout).getChildAt(1) as SeekBar
+        addSlider("Voice volume", (settings.translatedVolume * 100).toInt().coerceIn(0, 200), 200,
+            { "$it%" }) { current, progress -> current.copy(translatedVolume = progress / 100f) }
+        volumeSlider = (panel.getChildAt(panel.childCount - 1) as LinearLayout).getChildAt(1) as SeekBar
+        val presetRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, (36 * density).roundToInt())
+        }
+        fun presetButton(label: String, transform: (UserSettings) -> UserSettings) = TextView(context).apply {
+            text = label
+            textSize = 11f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                cornerRadius = 6 * density
+                setColor(Color.argb(90, 255, 255, 255))
+            }
+            layoutParams = LinearLayout.LayoutParams(0, (30 * density).roundToInt(), 1f).apply {
+                marginEnd = (6 * density).roundToInt()
+            }
+            setOnClickListener { onSettingsChanged(transform) }
+        }
+        presetRow.addView(presetButton("Compact") {
+            it.copy(fontSizeSp = 14f, backgroundAlpha = 0.45f, bilingual = false)
+        })
+        presetRow.addView(presetButton("Readable") {
+            it.copy(fontSizeSp = 26f, backgroundAlpha = 0.8f, bilingual = true)
+        })
+        panel.addView(presetRow)
+        fun addToggle(label: String, checked: Boolean, update: (UserSettings, Boolean) -> UserSettings) {
+            val toggle = Switch(context).apply {
+                text = label
+                textSize = 12f
+                setTextColor(Color.WHITE)
+                isChecked = checked
+                setOnCheckedChangeListener { _, value ->
+                    if (!syncingPanelControls) onSettingsChanged { current -> update(current, value) }
+                }
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                    (38 * density).roundToInt())
+            }
+            panel.addView(toggle)
+        }
+        addToggle("Bilingual subtitles", settings.bilingual) { current, value -> current.copy(bilingual = value) }
+        bilingualToggle = panel.getChildAt(panel.childCount - 1) as Switch
+        addToggle("Translated voice", settings.playTranslatedAudio) { current, value -> current.copy(playTranslatedAudio = value) }
+        voiceToggle = panel.getChildAt(panel.childCount - 1) as Switch
+        return panel
+    }
+
+    private fun toggleSettingsPanel(density: Float) {
+        val panel = settingsPanel ?: return
+        val params = layoutParams ?: return
+        val root = rootView ?: return
+        controlsHandler.removeCallbacks(hideControlsRunnable)
+        holdControlsVisible()
+        settingsPanelOpen = !settingsPanelOpen
+        if (settingsPanelOpen) {
+            heightBeforeSettingsPx = params.height
+            yBeforeSettingsPx = params.y
+            xAtSettingsOpenPx = params.x
+            panel.visibility = View.VISIBLE
+            val screenH = screenMetrics().second
+            params.height = clampHeight(params.height + (216 * density).roundToInt(), screenH)
+            params.y = params.y.coerceAtMost((screenH - params.height).coerceAtLeast(0))
+            settingsPanelAddedPx = params.height - heightBeforeSettingsPx
+            adjustedYAtSettingsOpenPx = params.y
+        } else {
+            panel.visibility = View.GONE
+            params.height = heightBeforeSettingsPx.takeIf { it > 0 } ?: params.height
+            if (params.x == xAtSettingsOpenPx && params.y == adjustedYAtSettingsOpenPx) {
+                params.y = yBeforeSettingsPx
+            }
+            settingsPanelAddedPx = 0
+        }
+        runCatching { windowManager.updateViewLayout(root, params) }
+        if (!settingsPanelOpen) scheduleControlsHide()
+    }
+
     /**
      * Root container that turns touches on the captions into gestures:
      * - quick tap (no movement)      → toggle the control strip
@@ -676,6 +886,7 @@ class SubtitleOverlayController(
                     downRawY = ev.rawY
                     downAt = SystemClock.uptimeMillis()
                     tapCandidate = true
+                    if (hitsInteractive(ev.rawX, ev.rawY)) tapCandidate = false
                     moved = false
                     pinching = false
                 }
@@ -798,6 +1009,7 @@ class SubtitleOverlayController(
 
         private fun hitsInteractive(rawX: Float, rawY: Float): Boolean {
             if (hits(resizeHandle, rawX, rawY)) return true
+            if (settingsPanelOpen && hits(settingsPanel, rawX, rawY)) return true
             val row = grabberRow
             if (row != null && controlsShown && row.visibility == View.VISIBLE &&
                 row.isEnabled && hits(row, rawX, rawY)
@@ -845,8 +1057,9 @@ class SubtitleOverlayController(
     /** Switch bilingual (split + divider) vs translation-only (full height scroll). */
     private fun applyLayoutMode() {
         val bilingual = effectiveBilingual()
-        inputSection?.visibility = if (bilingual) View.VISIBLE else View.GONE
-        dividerView?.visibility = if (bilingual) View.VISIBLE else View.GONE
+        inputSection?.visibility = if (captionsVisible && bilingual) View.VISIBLE else View.GONE
+        dividerView?.visibility = if (captionsVisible && bilingual) View.VISIBLE else View.GONE
+        outputScroll?.visibility = if (captionsVisible) View.VISIBLE else View.GONE
 
         // When translation-only, output takes all remaining weight.
         // When bilingual, both panes share weight 1f each.
@@ -956,7 +1169,8 @@ class SubtitleOverlayController(
                 params.x,
                 params.y,
                 (params.width / d).roundToInt().coerceAtLeast(1),
-                (params.height / d).roundToInt().coerceAtLeast(1),
+                ((if (settingsPanelOpen) heightBeforeSettingsPx else params.height) / d)
+                    .roundToInt().coerceAtLeast(1),
             )
         }.onFailure { Log.e(TAG, "persistGeometry failed", it) }
     }
@@ -1035,6 +1249,10 @@ class SubtitleOverlayController(
                         val (screenW, screenH, _) = screenMetrics()
                         params.width = clampWidth(params.width + dx.roundToInt(), screenW)
                         params.height = clampHeight(params.height + dy.roundToInt(), screenH)
+                        if (settingsPanelOpen) {
+                            heightBeforeSettingsPx = (params.height - settingsPanelAddedPx)
+                                .coerceAtLeast(MIN_HEIGHT_PX)
+                        }
                         windowManager.updateViewLayout(root, params)
                         true
                     }
