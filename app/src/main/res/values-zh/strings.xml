@@ -12,6 +12,10 @@
 
     <string name="subtitle_title">实时字幕</string>
     <string name="subtitle_subtitle">捕获系统内放音频 · Gemini Live Translate</string>
+    <string name="subtitle_gemini_flash_subtitle_ja">麦克风 · 日语转泰语 · Gemini 3.8 Flash</string>
+    <string name="subtitle_gemini_flash_subtitle_zh">麦克风 · 普通话（zh-CN）转泰语 · Gemini 3.8 Flash</string>
+    <string name="subtitle_gemini_flash_input_hint_ja">此模式通过麦克风聆听日语，在设备端识别语音，仅将文本发送给 Gemini 翻译成泰语。设备需有离线日语语音包。</string>
+    <string name="subtitle_gemini_flash_input_hint_zh">此模式通过麦克风聆听普通话（zh-CN），在设备端识别语音，仅将文本发送给 Gemini 翻译成泰语。设备需有离线中文语音包。</string>
     <string name="subtitle_hero_title">同传字幕</string>
     <string name="subtitle_hero_running">悬浮窗运行中</string>
     <string name="subtitle_hero_idle">一键启动系统内录翻译</string>
@@ -48,6 +52,24 @@
     <string name="settings_api_key_n">API Key %1$d</string>
     <string name="settings_api_keys_hint">最多 10 个 Key，启动会话时按顺序轮询使用。</string>
     <string name="settings_model_id">模型 ID</string>
+    <string name="settings_gemini_flash_test">Gemini Flash 文本测试模式</string>
+    <string name="settings_gemini_flash_test_summary">可选：使用设备端语音识别，再将识别文本发送给 Gemini 3.8 Flash 生成泰语字幕。使用麦克风，不提供译音。下次会话生效。需要 Android 12 及所选语言的设备端语音模型。</string>
+    <string name="settings_flash_source_language">Gemini Flash 源语言</string>
+    <string name="settings_flash_source_language_summary">中文需要已安装的普通话（zh-CN）离线语音包。Live API 保留原有的源语言自动检测。</string>
+    <string name="gemini_flash_source_japanese">日语（ja-JP）</string>
+    <string name="gemini_flash_source_chinese">普通话（zh-CN）</string>
+    <string name="settings_flash_prompt">Gemini Flash 系统指令</string>
+    <string name="settings_flash_prompt_summary">仅用于 Gemini Flash 文本测试模式。每段识别文本都会附带此指令发送。</string>
+    <string name="settings_flash_prompt_edit">编辑指令</string>
+    <string name="settings_flash_prompt_placeholder">说明如何将日语语音翻译为泰语字幕。</string>
+    <string name="settings_flash_prompt_save">保存</string>
+    <string name="settings_flash_prompt_reset">默认</string>
+    <string name="settings_flash_prompt_cancel">取消</string>
+    <string name="gemini_flash_test_running">正在识别日语语音，并使用 Gemini 3.8 Flash 翻译为泰语</string>
+    <string name="gemini_flash_asr_unavailable">设备端语音识别不可用。此模式需要 Android 12 或更高版本，并且设备支持设备端语音识别。关闭此模式可使用 Live Translate。</string>
+    <string name="gemini_flash_recognition_failed">%1$s 语音识别失败（代码 %2$d）。关闭测试模式可使用 Live Translate。</string>
+    <string name="gemini_flash_language_unavailable">设备没有 %1$s 的离线语音识别包。请在设备语音设置中安装相应离线包，或选择其他源语言。</string>
+    <string name="gemini_flash_translation_failed">Gemini 文本翻译失败：%1$s</string>
     <string name="settings_show">显示</string>
     <string name="settings_hide">隐藏</string>
     <string name="settings_save_and_test">保存并测试连接</string>
