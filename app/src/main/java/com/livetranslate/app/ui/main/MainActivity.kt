@@ -38,6 +38,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.livetranslate.app.LiveTranslateApp
 import com.livetranslate.app.R
 import com.livetranslate.app.data.AudioSourceMode
+import com.livetranslate.app.data.UserSettings
 import com.livetranslate.app.service.SessionBus
 import com.livetranslate.app.service.SubtitleSessionService
 import com.livetranslate.app.ui.settings.SettingsScreen
@@ -90,7 +91,7 @@ class MainActivity : ComponentActivity() {
                         runCatching {
                             SubtitleSessionService.start(
                                 this,
-                                audioSource = settings.audioSourceMode,
+                                audioSource = effectiveAudioSource(settings),
                                 resultCode = result.resultCode,
                                 data = result.data!!,
                             )
@@ -114,7 +115,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     if (PermissionUtils.canDrawOverlays(this) && pendingStart) {
                         pendingStart = false
-                        continueStartAfterPermissions(settings.audioSourceMode, projectionLauncher::launch)
+                        continueStartAfterPermissions(effectiveAudioSource(settings), projectionLauncher::launch)
                     }
                 }
 
@@ -133,7 +134,7 @@ class MainActivity : ComponentActivity() {
                         pendingStart = true
                         overlayLauncher.launch(PermissionUtils.overlaySettingsIntent(this))
                     } else {
-                        continueStartAfterPermissions(settings.audioSourceMode, projectionLauncher::launch)
+                        continueStartAfterPermissions(effectiveAudioSource(settings), projectionLauncher::launch)
                     }
                 }
 
@@ -147,7 +148,7 @@ class MainActivity : ComponentActivity() {
                             tab = 1
                             return
                         }
-                        val mode = settings.audioSourceMode
+                        val mode = effectiveAudioSource(settings)
                         val needed = buildList {
                             if (mode.needsMicrophone) {
                                 add(Manifest.permission.RECORD_AUDIO)
@@ -282,6 +283,9 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    private fun effectiveAudioSource(settings: UserSettings): AudioSourceMode =
+        if (settings.geminiFlashTestMode) AudioSourceMode.MIC else settings.audioSourceMode
 
     companion object {
         private const val TAG = "MainActivity"
