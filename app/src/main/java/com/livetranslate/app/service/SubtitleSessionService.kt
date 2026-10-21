@@ -10,7 +10,13 @@ import android.content.pm.ServiceInfo
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.IBinder
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.livetranslate.app.LiveTranslateApp
@@ -23,6 +29,7 @@ import com.livetranslate.app.data.AudioSourceMode
 import com.livetranslate.app.data.SupportedLanguages
 import com.livetranslate.app.data.UserSettings
 import com.livetranslate.app.live.LiveTranslateClient
+import com.livetranslate.app.live.GeminiFlashTranslationClient
 import com.livetranslate.app.overlay.SubtitleOverlayController
 import com.livetranslate.app.ui.main.MainActivity
 import com.livetranslate.app.util.AppStrings
@@ -41,6 +48,8 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.yield
 
 /**
@@ -62,7 +71,14 @@ class SubtitleSessionService : Service() {
     private var commandJob: Job? = null
     private var sessionJob: Job? = null
     private var reconnectJob: Job? = null
+    private var flashTranslationJob: Job? = null
+    private var flashSpeechRecognizer: SpeechRecognizer? = null
     private var reconnectAttempts = 0
+    private val recognitionHandler = Handler(Looper.getMainLooper())
+    private val translationMutex = Mutex()
+    private val flashTranslationClient = GeminiFlashTranslationClient()
+    private var recognitionIntent: Intent? = null
+    private var recognitionRestartPending = false
 
     private var currentSettings: UserSettings = UserSettings()
     private var audioSourceMode: AudioSourceMode = AudioSourceMode.MEDIA
@@ -222,10 +238,10 @@ class SubtitleSessionService : Service() {
             val client = LiveTranslateClient()
             liveClient = client
 
-            val player = TranslatedAudioPlayer()
+            val player = if (currentSettings.geminiFlashTestMode) null else TranslatedAudioPlayer()
             audioPlayer = player
             applyTranslatedAudioEnabled()
-            player.setVolume(currentSettings.translatedVolume)
+            player?.setVolume(currentSettings.translatedVolume)
 
             eventsJob = scope.launch {
                 launch {
@@ -251,7 +267,7 @@ class SubtitleSessionService : Service() {
                     // client.events are never dropped (SUSPEND overflow).
                     client.audioChunks.collect { event ->
                         if (sameLanguageMode.shouldPlayTranslatedAudio(currentSettings.playTranslatedAudio)) {
-                            player.playPcm(event.pcm, event.mimeType)
+                            player?.playPcm(event.pcm, event.mimeType)
                         }
                     }
                 }
@@ -318,7 +334,7 @@ class SubtitleSessionService : Service() {
                     if (!appearanceOrAudioChanged) return@collectLatest
                     overlay?.updateSettings(s)
                     applyTranslatedAudioEnabled()
-                    player.setVolume(s.translatedVolume)
+                    player?.setVolume(s.translatedVolume)
                     if (prev.playTranslatedAudio && !s.playTranslatedAudio) {
                         Log.i(TAG, "translated audio disabled")
                     }
@@ -332,6 +348,22 @@ class SubtitleSessionService : Service() {
             if (key.isBlank()) {
                 SessionBus.setStatus(SessionBus.Status.Error, AppStrings.get(R.string.msg_need_api_key))
                 stopEverything(AppStrings.get(R.string.msg_need_api_key), error = true)
+                return
+            }
+            if (currentSettings.geminiFlashTestMode) {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                    !SpeechRecognizer.isOnDeviceRecognitionAvailable(this@SubtitleSessionService)
+                ) {
+                    val message = getString(R.string.gemini_flash_asr_unavailable)
+                    SessionBus.setStatus(SessionBus.Status.Error, message)
+                    stopEverything(message, error = true)
+                    return
+                }
+                startJapaneseSpeechRecognition(key)
+                SessionBus.setStatus(
+                    SessionBus.Status.Running,
+                    getString(R.string.gemini_flash_test_running),
+                )
                 return
             }
             client.connect(
@@ -349,6 +381,126 @@ class SubtitleSessionService : Service() {
                     customPrompt = currentSettings.customPrompt,
                 ),
             )
+    }
+
+    private fun startJapaneseSpeechRecognition(apiKey: String) {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            val sourceLocale = when (currentSettings.geminiFlashSourceLanguage) {
+                UserSettings.Defaults.GEMINI_FLASH_SOURCE_LANGUAGE_CHINESE -> CHINESE_LOCALE
+                else -> JAPANESE_LOCALE
+            }
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, sourceLocale)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, sourceLocale)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+        }
+        recognitionIntent = intent
+        val recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
+        flashSpeechRecognizer = recognizer
+        recognizer.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) = Unit
+            override fun onBeginningOfSpeech() = Unit
+            override fun onRmsChanged(rmsdB: Float) = Unit
+            override fun onBufferReceived(buffer: ByteArray?) = Unit
+            override fun onEndOfSpeech() = Unit
+            override fun onEvent(eventType: Int, params: Bundle?) = Unit
+            override fun onPartialResults(partialResults: Bundle?) = Unit
+
+            override fun onResults(results: Bundle?) {
+                val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    ?.firstOrNull()?.trim().orEmpty()
+                if (text.isNotBlank()) {
+                    flashTranslationJob = scope.launch {
+                        translationMutex.withLock {
+                            if (stopping) return@withLock
+                            appendTranscript(accumulatedInput, text)
+                            appendFull(fullInput, text)
+                            publishCaptionUpdate(inputChanged = true, outputChanged = false)
+                            try {
+                                val translated = flashTranslationClient.translateJapaneseToThai(
+                                    transcript = text,
+                                    systemInstructions = currentSettings.geminiFlashSystemInstructions,
+                                    apiKey = apiKey,
+                                )
+                                if (stopping) return@withLock
+                                appendTranscript(accumulatedOutput, translated)
+                                appendFull(fullOutput, translated)
+                                publishCaptionUpdate(inputChanged = false, outputChanged = true)
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (t: Throwable) {
+                                Log.e(TAG, "Gemini Flash text translation failed", t)
+                                val message = getString(
+                                    R.string.gemini_flash_translation_failed,
+                                    t.message.orEmpty(),
+                                )
+                                stopEverything(message, error = true)
+                            }
+                        }
+                    }
+                }
+                restartJapaneseRecognition(RECOGNITION_RESTART_DELAY_MS)
+            }
+
+            override fun onError(error: Int) {
+                if (stopping) return
+                if (error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED ||
+                    error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE
+                ) {
+                    val languageLabel = when (currentSettings.geminiFlashSourceLanguage) {
+                        UserSettings.Defaults.GEMINI_FLASH_SOURCE_LANGUAGE_CHINESE ->
+                            getString(R.string.gemini_flash_source_chinese)
+                        else -> getString(R.string.gemini_flash_source_japanese)
+                    }
+                    val message = getString(R.string.gemini_flash_language_unavailable, languageLabel)
+                    SessionBus.setStatus(SessionBus.Status.Error, message)
+                    stopEverything(message, error = true)
+                    return
+                }
+                if (error == SpeechRecognizer.ERROR_NO_MATCH ||
+                    error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
+                    error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY
+                ) {
+                    restartJapaneseRecognition(RECOGNITION_RESTART_DELAY_MS)
+                } else {
+                    val languageLabel = when (currentSettings.geminiFlashSourceLanguage) {
+                        UserSettings.Defaults.GEMINI_FLASH_SOURCE_LANGUAGE_CHINESE ->
+                            getString(R.string.gemini_flash_source_chinese)
+                        else -> getString(R.string.gemini_flash_source_japanese)
+                    }
+                    val message = getString(R.string.gemini_flash_recognition_failed, languageLabel, error)
+                    SessionBus.setStatus(SessionBus.Status.Error, message)
+                    stopEverything(message, error = true)
+                }
+            }
+        })
+        recognizer.startListening(intent)
+    }
+
+    private fun restartJapaneseRecognition(delayMs: Long) {
+        if (stopping || recognitionRestartPending) return
+        recognitionRestartPending = true
+        recognitionHandler.postDelayed({
+            recognitionRestartPending = false
+            val recognizer = flashSpeechRecognizer
+            val intent = recognitionIntent
+            if (!stopping && recognizer != null && intent != null) {
+                runCatching { recognizer.startListening(intent) }
+                    .onFailure { Log.e(TAG, "Could not restart on-device recognition", it) }
+            }
+        }, delayMs)
+    }
+
+    private fun releaseJapaneseSpeechRecognition() {
+        recognitionHandler.removeCallbacksAndMessages(null)
+        recognitionRestartPending = false
+        recognitionIntent = null
+        runCatching { flashSpeechRecognizer?.destroy() }
+        flashSpeechRecognizer = null
+        flashTranslationJob?.cancel()
+        flashTranslationJob = null
     }
 
     /**
@@ -602,6 +754,7 @@ class SubtitleSessionService : Service() {
     private fun stopEverything(message: String, error: Boolean = false) {
         if (stopping) return
         stopping = true
+        releaseJapaneseSpeechRecognition()
         sessionJob?.cancel()
         sessionJob = null
         reconnectJob?.cancel()
@@ -649,6 +802,7 @@ class SubtitleSessionService : Service() {
     }
 
     override fun onDestroy() {
+        releaseJapaneseSpeechRecognition()
         mediaCapturer?.stop()
         micCapturer?.stop()
         pcmMixer?.close()
@@ -670,6 +824,9 @@ class SubtitleSessionService : Service() {
         private const val PREVIEW_THROTTLE_MS = 200L
         private const val MAX_RECONNECTS = 6
         private const val RECONNECT_BASE_DELAY_MS = 1_500L
+        private const val RECOGNITION_RESTART_DELAY_MS = 350L
+        private const val JAPANESE_LOCALE = "ja-JP"
+        private const val CHINESE_LOCALE = "zh-CN"
         const val ACTION_START = "com.livetranslate.app.action.START_SUBTITLE"
         const val ACTION_STOP = "com.livetranslate.app.action.STOP_SUBTITLE"
         const val EXTRA_RESULT_CODE = "result_code"
