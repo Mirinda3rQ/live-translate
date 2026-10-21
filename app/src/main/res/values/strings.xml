@@ -12,10 +12,10 @@
 
     <string name="subtitle_title">Live subtitles</string>
     <string name="subtitle_subtitle">Capture system playback · Gemini Live Translate</string>
-    <string name="subtitle_gemini_flash_subtitle_ja">Microphone · Japanese to Thai · Gemini 3.8 Flash</string>
-    <string name="subtitle_gemini_flash_subtitle_zh">Microphone · Mandarin Chinese (zh-CN) to Thai · Gemini 3.8 Flash</string>
-    <string name="subtitle_gemini_flash_input_hint_ja">This mode listens to Japanese through your microphone, recognizes it on-device, and sends only the text to Gemini for Thai translation. An offline Japanese speech pack must be available.</string>
-    <string name="subtitle_gemini_flash_input_hint_zh">This mode listens to Mandarin Chinese (zh-CN) through your microphone, recognizes it on-device, and sends only the text to Gemini for Thai translation. An offline Chinese speech pack must be available on your device.</string>
+    <string name="subtitle_gemini_flash_subtitle_ja">Media audio · Japanese to Thai · Gemini 3.8 Flash</string>
+    <string name="subtitle_gemini_flash_subtitle_zh">Media audio · Mandarin Chinese (zh-CN) to Thai · Gemini 3.8 Flash</string>
+    <string name="subtitle_gemini_flash_input_hint_ja">This mode captures the selected audio source and sends short audio clips to Gemini 3.8 Flash for Thai subtitles. For videos, select Media. No microphone or offline speech pack is needed in Media mode.</string>
+    <string name="subtitle_gemini_flash_input_hint_zh">This mode captures the selected audio source and sends short audio clips to Gemini 3.8 Flash for Thai subtitles. For videos, select Media. No microphone or offline speech pack is needed in Media mode.</string>
     <string name="subtitle_hero_title">Live captions</string>
     <string name="subtitle_hero_running">Overlay is running</string>
     <string name="subtitle_hero_idle">One-tap system audio translation</string>
@@ -52,8 +52,8 @@
     <string name="settings_api_key_n">API Key %1$d</string>
     <string name="settings_api_keys_hint">Add up to 10 keys. Sessions rotate keys in order.</string>
     <string name="settings_model_id">Model ID</string>
-    <string name="settings_gemini_flash_test">Gemini Flash text test</string>
-    <string name="settings_gemini_flash_test_summary">Optional: on-device speech recognition, then send the transcript to Gemini 3.8 Flash for Thai subtitles. Microphone input is used; translated audio is unavailable. Applies next session. Requires Android 12+ and an installed on-device speech model for the selected language.</string>
+    <string name="settings_gemini_flash_test">Gemini Flash audio subtitles</string>
+    <string name="settings_gemini_flash_test_summary">Uses captured audio from the selected source and sends short clips to Gemini 3.8 Flash for Thai subtitles. For video playback, select Media. Applies next session. Requires an internet connection.</string>
     <string name="settings_flash_source_language">Gemini Flash source language</string>
     <string name="settings_flash_source_language_summary">Chinese requires an installed offline Mandarin (zh-CN) speech pack. Live API keeps its existing automatic source-language detection.</string>
     <string name="gemini_flash_source_japanese">Japanese (ja-JP)</string>
@@ -65,7 +65,7 @@
     <string name="settings_flash_prompt_save">Save</string>
     <string name="settings_flash_prompt_reset">Default</string>
     <string name="settings_flash_prompt_cancel">Cancel</string>
-    <string name="gemini_flash_test_running">Japanese speech recognition · translating to Thai with Gemini 3.8 Flash</string>
+    <string name="gemini_flash_test_running">Translating captured audio to Thai subtitles with Gemini 3.8 Flash</string>
     <string name="gemini_flash_asr_unavailable">On-device speech recognition is unavailable. This mode requires Android 12 or newer with on-device speech recognition available. Turn it off to use Live Translate.</string>
     <string name="gemini_flash_recognition_failed">Speech recognition for %1$s failed (code %2$d). Turn off test mode to use Live Translate.</string>
     <string name="gemini_flash_language_unavailable">The on-device speech pack for %1$s is unavailable. Install its offline recognition pack in your device\'s speech settings, or choose another source language.</string>
