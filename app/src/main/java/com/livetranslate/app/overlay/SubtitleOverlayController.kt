@@ -395,6 +395,8 @@ class SubtitleOverlayController(
 
         params.width = clampWidth(params.width, screenW)
         params.height = clampHeight(params.height, screenH)
+        params.x = safeCoerce(params.x, 0, max(0, screenW - params.width))
+        params.y = safeCoerce(params.y, 0, max(0, screenH - params.height))
 
         val changed = params.width != oldW || params.height != oldH ||
             params.x != oldX || params.y != oldY || screenChanged
