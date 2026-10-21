@@ -29,6 +29,9 @@ class UserSettingsRepository(private val context: Context) {
         val overlayWidthDp = intPreferencesKey("overlay_width_dp")
         val overlayHeightDp = intPreferencesKey("overlay_height_dp")
         val audioSourceMode = stringPreferencesKey("audio_source_mode")
+        val geminiFlashTestMode = booleanPreferencesKey("gemini_flash_test_mode")
+        val geminiFlashSourceLanguage = stringPreferencesKey("gemini_flash_source_language")
+        val geminiFlashSystemInstructions = stringPreferencesKey("gemini_flash_system_instructions")
         val customPrompt = stringPreferencesKey("custom_prompt")
     }
 
@@ -52,6 +55,9 @@ class UserSettingsRepository(private val context: Context) {
             prefs[Keys.overlayWidthDp] = next.overlayWidthDp
             prefs[Keys.overlayHeightDp] = next.overlayHeightDp
             prefs[Keys.audioSourceMode] = next.audioSourceMode.name
+            prefs[Keys.geminiFlashTestMode] = next.geminiFlashTestMode
+            prefs[Keys.geminiFlashSourceLanguage] = next.geminiFlashSourceLanguage
+            prefs[Keys.geminiFlashSystemInstructions] = next.geminiFlashSystemInstructions
             prefs[Keys.customPrompt] = next.customPrompt
         }
     }
@@ -83,6 +89,15 @@ class UserSettingsRepository(private val context: Context) {
         overlayWidthDp = this[Keys.overlayWidthDp] ?: UserSettings.Defaults.OVERLAY_WIDTH_DP,
         overlayHeightDp = this[Keys.overlayHeightDp] ?: UserSettings.Defaults.OVERLAY_HEIGHT_DP,
         audioSourceMode = AudioSourceMode.fromStorage(this[Keys.audioSourceMode]),
+        geminiFlashTestMode = this[Keys.geminiFlashTestMode]
+            ?: UserSettings.Defaults.GEMINI_FLASH_TEST_MODE,
+        geminiFlashSourceLanguage = when (this[Keys.geminiFlashSourceLanguage]) {
+            UserSettings.Defaults.GEMINI_FLASH_SOURCE_LANGUAGE_CHINESE ->
+                UserSettings.Defaults.GEMINI_FLASH_SOURCE_LANGUAGE_CHINESE
+            else -> UserSettings.Defaults.GEMINI_FLASH_SOURCE_LANGUAGE_JAPANESE
+        },
+        geminiFlashSystemInstructions = this[Keys.geminiFlashSystemInstructions]
+            ?: UserSettings.Defaults.GEMINI_FLASH_SYSTEM_INSTRUCTIONS,
         customPrompt = this[Keys.customPrompt] ?: UserSettings.Defaults.CUSTOM_PROMPT,
     )
 }
