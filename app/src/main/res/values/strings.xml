@@ -68,7 +68,7 @@
     <string name="gemini_flash_test_running">Japanese speech recognition · translating to Thai with Gemini 3.8 Flash</string>
     <string name="gemini_flash_asr_unavailable">On-device speech recognition is unavailable. This mode requires Android 12 or newer with on-device speech recognition available. Turn it off to use Live Translate.</string>
     <string name="gemini_flash_recognition_failed">Speech recognition for %1$s failed (code %2$d). Turn off test mode to use Live Translate.</string>
-    <string name="gemini_flash_language_unavailable">The on-device speech pack for %1$s is unavailable. Install its offline recognition pack in your device's speech settings, or choose another source language.</string>
+    <string name="gemini_flash_language_unavailable">The on-device speech pack for %1$s is unavailable. Install its offline recognition pack in your device\'s speech settings, or choose another source language.</string>
     <string name="gemini_flash_translation_failed">Gemini text translation failed: %1$s</string>
     <string name="settings_show">Show</string>
     <string name="settings_hide">Hide</string>
