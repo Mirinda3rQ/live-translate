@@ -84,7 +84,7 @@ class GeminiFlashTranslationClient {
         val wav = pcm16leToWav(pcm16le)
         val prompt = "Transcribe speech in this audio segment. Source language: $sourceLanguage. " +
             "Translate it into natural Thai. Return only JSON with exactly two string keys: " +
-            ""source" for the transcript and "thai" for the Thai translation. No markdown or commentary."
+            "Use JSON keys source for the transcript and thai for the Thai translation. No markdown or commentary."
         val baseInstruction = systemInstructions.trim().ifBlank {
             com.livetranslate.app.data.UserSettings.Defaults.GEMINI_FLASH_SYSTEM_INSTRUCTIONS
         }
