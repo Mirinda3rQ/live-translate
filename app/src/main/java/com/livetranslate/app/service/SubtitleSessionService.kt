@@ -17,6 +17,7 @@ import android.os.IBinder
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import java.io.ByteArrayOutputStream
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.livetranslate.app.LiveTranslateApp
@@ -40,6 +41,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
@@ -72,6 +74,10 @@ class SubtitleSessionService : Service() {
     private var sessionJob: Job? = null
     private var reconnectJob: Job? = null
     private var flashTranslationJob: Job? = null
+    private var flashAudioQueueJob: Job? = null
+    private var flashAudioChannel: Channel<ByteArray>? = null
+    private val flashAudioBufferLock = Any()
+    private var flashAudioBuffer = ByteArrayOutputStream()
     private var flashSpeechRecognizer: SpeechRecognizer? = null
     private var reconnectAttempts = 0
     private val recognitionHandler = Handler(Looper.getMainLooper())
@@ -351,15 +357,7 @@ class SubtitleSessionService : Service() {
                 return
             }
             if (currentSettings.geminiFlashTestMode) {
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
-                    !SpeechRecognizer.isOnDeviceRecognitionAvailable(this@SubtitleSessionService)
-                ) {
-                    val message = getString(R.string.gemini_flash_asr_unavailable)
-                    SessionBus.setStatus(SessionBus.Status.Error, message)
-                    stopEverything(message, error = true)
-                    return
-                }
-                startJapaneseSpeechRecognition(key)
+                startGeminiFlashCapture(key)
                 SessionBus.setStatus(
                     SessionBus.Status.Running,
                     getString(R.string.gemini_flash_test_running),
@@ -381,6 +379,102 @@ class SubtitleSessionService : Service() {
                     customPrompt = currentSettings.customPrompt,
                 ),
             )
+    }
+
+    /** Captures MP4 playback for Flash; MIC mode still uses Android on-device ASR. */
+    private fun startGeminiFlashCapture(apiKey: String) {
+        if (audioSourceMode == AudioSourceMode.MIC) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                !SpeechRecognizer.isOnDeviceRecognitionAvailable(this@SubtitleSessionService)
+            ) throw IllegalStateException(getString(R.string.gemini_flash_asr_unavailable))
+            startJapaneseSpeechRecognition(apiKey)
+            return
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            throw IllegalStateException("Media audio capture requires Android 10 or later")
+        }
+        val channel = Channel<ByteArray>(capacity = 3)
+        flashAudioChannel = channel
+        flashAudioQueueJob = scope.launch {
+            for (pcm in channel) {
+                if (stopping) break
+                try {
+                    val source = if (currentSettings.geminiFlashSourceLanguage ==
+                        UserSettings.Defaults.GEMINI_FLASH_SOURCE_LANGUAGE_CHINESE
+                    ) "Mandarin Chinese" else "Japanese"
+                    val result = flashTranslationClient.translatePcm16kAudioToThai(
+                        pcm16le = pcm,
+                        sourceLanguage = source,
+                        systemInstructions = currentSettings.geminiFlashSystemInstructions,
+                        apiKey = apiKey,
+                    )
+                    if (!stopping) {
+                        if (result.sourceText.isNotBlank()) {
+                            appendTranscript(accumulatedInput, result.sourceText)
+                            appendFull(fullInput, result.sourceText)
+                        }
+                        if (result.thaiText.isNotBlank()) {
+                            appendTranscript(accumulatedOutput, result.thaiText)
+                            appendFull(fullOutput, result.thaiText)
+                        }
+                        publishCaptionUpdate(
+                            inputChanged = result.sourceText.isNotBlank(),
+                            outputChanged = result.thaiText.isNotBlank(),
+                        )
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (t: Throwable) {
+                    Log.e(TAG, "Gemini Flash audio translation failed", t)
+                    val message = getString(R.string.gemini_flash_translation_failed, t.message.orEmpty())
+                    SessionBus.setStatus(SessionBus.Status.Error, message)
+                    stopEverything(message, error = true)
+                    break
+                }
+            }
+        }
+        val onError: (String) -> Unit = { message ->
+            scope.launch { stopEverything(message, error = true) }
+        }
+        when (audioSourceMode) {
+            AudioSourceMode.MEDIA -> {
+                val projection = mediaProjection
+                    ?: throw IllegalStateException(AppStrings.get(R.string.error_missing_projection))
+                val capturer = SystemAudioCapturer(ioScope)
+                mediaCapturer = capturer
+                capturer.start(projection, ::offerGeminiFlashPcm, onError)
+            }
+            AudioSourceMode.MEDIA_AND_MIC -> {
+                val projection = mediaProjection
+                    ?: throw IllegalStateException(AppStrings.get(R.string.error_missing_projection))
+                val mixer = PcmMixer(::offerGeminiFlashPcm)
+                pcmMixer = mixer
+                val media = SystemAudioCapturer(ioScope)
+                mediaCapturer = media
+                media.start(projection, mixer::offerMedia, onError)
+                val mic = MicAudioCapturer(ioScope)
+                micCapturer = mic
+                mic.start(mixer::offerMic, onError)
+            }
+            AudioSourceMode.MIC -> Unit
+        }
+    }
+
+    private fun offerGeminiFlashPcm(pcm: ByteArray) {
+        if (stopping || pcm.isEmpty()) return
+        var ready: ByteArray? = null
+        synchronized(flashAudioBufferLock) {
+            flashAudioBuffer.write(pcm)
+            if (flashAudioBuffer.size() >= FLASH_AUDIO_SEGMENT_BYTES) {
+                ready = flashAudioBuffer.toByteArray()
+                flashAudioBuffer.reset()
+            }
+        }
+        ready?.let {
+            if (flashAudioChannel?.trySend(it)?.isFailure != false) {
+                Log.w(TAG, "Gemini Flash audio queue is full; skipping a segment")
+            }
+        }
     }
 
     private fun startJapaneseSpeechRecognition(apiKey: String) {
@@ -501,6 +595,11 @@ class SubtitleSessionService : Service() {
         flashSpeechRecognizer = null
         flashTranslationJob?.cancel()
         flashTranslationJob = null
+        flashAudioChannel?.close()
+        flashAudioChannel = null
+        flashAudioQueueJob?.cancel()
+        flashAudioQueueJob = null
+        synchronized(flashAudioBufferLock) { flashAudioBuffer.reset() }
     }
 
     /**
@@ -831,6 +930,7 @@ class SubtitleSessionService : Service() {
         const val ACTION_STOP = "com.livetranslate.app.action.STOP_SUBTITLE"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
+        private const val FLASH_AUDIO_SEGMENT_BYTES = 16_000 * 2 * 6
         const val EXTRA_AUDIO_SOURCE = "audio_source"
 
         fun start(
