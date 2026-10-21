@@ -285,7 +285,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun effectiveAudioSource(settings: UserSettings): AudioSourceMode =
-        if (settings.geminiFlashTestMode) AudioSourceMode.MIC else settings.audioSourceMode
+        settings.audioSourceMode
 
     companion object {
         private const val TAG = "MainActivity"
