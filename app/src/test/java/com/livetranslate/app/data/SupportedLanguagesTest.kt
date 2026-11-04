@@ -28,7 +28,7 @@ class SupportedLanguagesTest {
         assertEquals("no", SupportedLanguages.canonicalOrDefault("nb"))
         assertEquals("no", SupportedLanguages.canonicalOrDefault("NN"))
         assertEquals("zh-Hans", SupportedLanguages.canonicalOrDefault("zh-Hans"))
-        assertEquals("zh-Hans", SupportedLanguages.canonicalOrDefault("auto"))
-        assertEquals("zh-Hans", SupportedLanguages.canonicalOrDefault(""))
+        assertEquals("th", SupportedLanguages.canonicalOrDefault("auto"))
+        assertEquals("th", SupportedLanguages.canonicalOrDefault(""))
     }
 }
