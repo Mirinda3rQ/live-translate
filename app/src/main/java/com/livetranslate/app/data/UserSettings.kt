@@ -28,7 +28,8 @@ data class UserSettings(
         const val ENDPOINT =
             "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
         const val MODEL_ID = "gemini-3.5-live-translate-preview"
-        const val TARGET_LANGUAGE = "zh-Hans"
+        // Thai is the default subtitle language; the input language remains auto-detected.
+        const val TARGET_LANGUAGE = "th"
         const val FONT_SIZE_SP = 18f
         const val BACKGROUND_ALPHA = 0.65f
         const val BILINGUAL = false
@@ -38,7 +39,7 @@ data class UserSettings(
         const val GEMINI_FLASH_SOURCE_LANGUAGE_JAPANESE = "ja-JP"
         const val GEMINI_FLASH_SOURCE_LANGUAGE_CHINESE = "zh-CN"
         const val GEMINI_FLASH_SYSTEM_INSTRUCTIONS =
-            "Translate the selected source-language speech into natural, faithful Thai subtitles. Preserve the original meaning, names, numbers, and tone. Keep the translation concise. Return only the Thai translation, with no explanations or quotation marks."
+            "Translate the selected source-language speech into natural, faithful Thai subtitles. Preserve the original meaning, names, numbers, and tone, including colloquial language and profanity when present. Do not sanitize, censor, or add explanations. Keep the translation concise and suitable for adult audiences. Return only the Thai translation, with no explanations or quotation marks."
         const val TRANSLATED_VOLUME = 0.8f
         const val OVERLAY_X = 24
         const val OVERLAY_Y = -1
