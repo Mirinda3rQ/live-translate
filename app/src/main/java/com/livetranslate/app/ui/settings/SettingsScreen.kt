@@ -49,6 +49,7 @@ import com.livetranslate.app.BuildConfig
 import com.livetranslate.app.R
 import com.livetranslate.app.data.ApiKeyStore
 import com.livetranslate.app.data.UserSettings
+import com.livetranslate.app.data.TranslationProvider
 import com.livetranslate.app.ui.components.PageTitle
 import com.livetranslate.app.ui.components.SectionCard
 import com.livetranslate.app.ui.components.SettingSwitchRow
@@ -69,6 +70,7 @@ fun SettingsScreen(
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val apiKeyFields by viewModel.apiKeyFields.collectAsStateWithLifecycle()
+    val groqApiKey by viewModel.groqApiKey.collectAsStateWithLifecycle()
     val testResult by viewModel.testResult.collectAsStateWithLifecycle()
     val testing by viewModel.testing.collectAsStateWithLifecycle()
 
@@ -79,10 +81,7 @@ fun SettingsScreen(
         mutableStateOf(TextFieldValue(settings.modelId, TextRange(settings.modelId.length)))
     }
     var revealKey by remember { mutableStateOf(false) }
-    var showPromptDialog by remember { mutableStateOf(false) }
-    var promptDraft by remember { mutableStateOf("") }
-    var showFlashPromptDialog by remember { mutableStateOf(false) }
-    var flashPromptDraft by remember { mutableStateOf("") }
+    var revealGroqKey by remember { mutableStateOf(false) }
 
     var endpointHydrated by remember { mutableStateOf(false) }
     var modelHydrated by remember { mutableStateOf(false) }
@@ -116,115 +115,6 @@ fun SettingsScreen(
         unfocusedPlaceholderColor = scheme.onSurfaceVariantSummary,
     )
 
-    if (showPromptDialog) {
-        AlertDialog(
-            onDismissRequest = { showPromptDialog = false },
-            containerColor = scheme.surface,
-            titleContentColor = scheme.onSurface,
-            textContentColor = scheme.onSurface,
-            title = { androidx.compose.material3.Text("Custom prompt") },
-            text = {
-                OutlinedTextField(
-                    value = promptDraft,
-                    onValueChange = { promptDraft = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 5,
-                    maxLines = 10,
-                    placeholder = {
-                        androidx.compose.material3.Text(
-                            "เช่น: คุณเป็นล่าม แปลทุกอย่างที่ได้ยินเป็นภาษาไทยที่เป็นธรรมชาติ ...",
-                        )
-                    },
-                    shape = RoundedCornerShape(16.dp),
-                    colors = fieldColors,
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    text = "บันทึก",
-                    onClick = {
-                        val v = promptDraft.trim()
-                        viewModel.update { it.copy(customPrompt = v) }
-                        showPromptDialog = false
-                    },
-                )
-            },
-            dismissButton = {
-                Row {
-                    TextButton(
-                        text = "ล้าง",
-                        onClick = {
-                            viewModel.update { it.copy(customPrompt = "") }
-                            showPromptDialog = false
-                        },
-                    )
-                    TextButton(
-                        text = "ยกเลิก",
-                        onClick = { showPromptDialog = false },
-                    )
-                }
-            },
-        )
-    }
-
-    if (showFlashPromptDialog) {
-        AlertDialog(
-            onDismissRequest = { showFlashPromptDialog = false },
-            containerColor = scheme.surface,
-            titleContentColor = scheme.onSurface,
-            textContentColor = scheme.onSurface,
-            title = { androidx.compose.material3.Text(stringResource(R.string.settings_flash_prompt)) },
-            text = {
-                OutlinedTextField(
-                    value = flashPromptDraft,
-                    onValueChange = { flashPromptDraft = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 5,
-                    maxLines = 10,
-                    placeholder = {
-                        androidx.compose.material3.Text(
-                            stringResource(R.string.settings_flash_prompt_placeholder),
-                        )
-                    },
-                    shape = RoundedCornerShape(16.dp),
-                    colors = fieldColors,
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    text = stringResource(R.string.settings_flash_prompt_save),
-                    onClick = {
-                        val value = flashPromptDraft.trim().ifBlank {
-                            com.livetranslate.app.data.UserSettings.Defaults.GEMINI_FLASH_SYSTEM_INSTRUCTIONS
-                        }
-                        viewModel.update { it.copy(geminiFlashSystemInstructions = value) }
-                        showFlashPromptDialog = false
-                    },
-                )
-            },
-            dismissButton = {
-                Row {
-                    TextButton(
-                        text = stringResource(R.string.settings_flash_prompt_reset),
-                        onClick = {
-                            viewModel.update {
-                                it.copy(
-                                    geminiFlashSystemInstructions =
-                                        com.livetranslate.app.data.UserSettings.Defaults.GEMINI_FLASH_SYSTEM_INSTRUCTIONS,
-                                )
-                            }
-                            showFlashPromptDialog = false
-                        },
-                    )
-                    TextButton(
-                        text = stringResource(R.string.settings_flash_prompt_cancel),
-                        onClick = { showFlashPromptDialog = false },
-                    )
-                }
-            },
-        )
-    }
-
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -238,7 +128,44 @@ fun SettingsScreen(
         )
 
         SmallTitle(
-            text = stringResource(R.string.settings_api),
+            text = "ผู้ให้บริการแปลภาษา",
+            modifier = Modifier.padding(horizontal = 24.dp),
+        )
+        SectionCard {
+            Column(modifier = Modifier.padding(vertical = 6.dp)) {
+                listOf(
+                    TranslationProvider.GEMINI to "Gemini Live",
+                    TranslationProvider.GROQ to "Groq (Whisper + Llama)",
+                ).forEach { (provider, label) ->
+                    val selected = settings.translationProvider == provider
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            viewModel.update { it.copy(translationProvider = provider) }
+                        }.padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = selected, onClick = null)
+                        Column(modifier = Modifier.padding(start = 10.dp)) {
+                            Text(
+                                text = label,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (selected) Booth.Accent else MiuixTheme.colorScheme.onSurface,
+                            )
+                            Text(
+                                text = if (provider == TranslationProvider.GEMINI)
+                                    "แปลเสียงแบบ Live ต่อเนื่อง"
+                                else "ถอดเสียงเป็นช่วงสั้น ๆ แล้วแปลเป็นไทย",
+                                fontSize = 12.sp,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        SmallTitle(
+            text = if (settings.translationProvider == TranslationProvider.GROQ) "Groq API Key" else stringResource(R.string.settings_api),
             modifier = Modifier.padding(horizontal = 24.dp),
         )
         SectionCard {
@@ -246,128 +173,123 @@ fun SettingsScreen(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text(
-                    text = stringResource(R.string.settings_api_desc),
-                    fontSize = 13.sp,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
-                OutlinedTextField(
-                    value = endpointField,
-                    onValueChange = { v ->
-                        endpointField = v
-                        viewModel.update { it.copy(endpoint = v.text.trim()) }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { androidx.compose.material3.Text(stringResource(R.string.settings_endpoint)) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
-                    colors = fieldColors,
-                )
-
-                Text(
-                    text = stringResource(R.string.settings_api_keys_hint),
-                    fontSize = 12.sp,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
-
-                apiKeyFields.forEachIndexed { index, field ->
-                    val isLast = index == apiKeyFields.lastIndex
-                    val canAdd = isLast && apiKeyFields.size < ApiKeyStore.MAX_KEYS
-                    val canRemove = index > 0
-                    Row(
+                if (settings.translationProvider == TranslationProvider.GROQ) {
+                    Text(
+                        text = "ใช้ Groq Whisper ถอดเสียง และ Llama แปลเป็นไทย • คำหยาบและเนื้อหา 18+ จะแปลตามบริบท ไม่เซ็นเซอร์",
+                        fontSize = 13.sp,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                    OutlinedTextField(
+                        value = groqApiKey,
+                        onValueChange = viewModel::updateGroqApiKey,
                         modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
+                        label = { androidx.compose.material3.Text("Groq API Key") },
+                        singleLine = true,
+                        visualTransformation = if (revealGroqKey) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = fieldColors,
+                    )
+                    TextButton(
+                        text = if (revealGroqKey) "ซ่อน API Key" else "แสดง API Key",
+                        onClick = { revealGroqKey = !revealGroqKey },
+                    )
+                    Button(
+                        onClick = {
+                            viewModel.saveGroqApiKey()
+                            viewModel.testGroqConnection()
+                        },
+                        enabled = !testing,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColorsPrimary(),
                     ) {
-                        if (canAdd) {
-                            IconButton(
-                                onClick = viewModel::addApiKeyField,
-                                modifier = Modifier.size(40.dp),
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Add,
-                                    contentDescription = stringResource(R.string.settings_add_key),
-                                    tint = Booth.Accent,
-                                )
-                            }
-                        } else {
-                            Spacer(modifier = Modifier.width(40.dp))
-                        }
-                        OutlinedTextField(
-                            value = field,
-                            onValueChange = { v -> viewModel.updateApiKeyField(index, v) },
-                            modifier = Modifier.weight(1f),
-                            label = {
-                                androidx.compose.material3.Text(
-                                    stringResource(R.string.settings_api_key_n, index + 1),
-                                )
-                            },
-                            singleLine = true,
-                            visualTransformation = if (revealKey) {
-                                VisualTransformation.None
-                            } else {
-                                PasswordVisualTransformation()
-                            },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = fieldColors,
+                        Text(
+                            text = if (testing) "กำลังทดสอบ..." else "บันทึกและทดสอบ Groq",
+                            fontWeight = FontWeight.SemiBold,
                         )
-                        if (canRemove) {
-                            IconButton(
-                                onClick = { viewModel.removeApiKeyField(index) },
-                                modifier = Modifier.size(40.dp),
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Remove,
-                                    contentDescription = stringResource(R.string.settings_remove_key),
-                                    tint = Booth.Danger,
-                                )
-                            }
-                        } else {
-                            Spacer(modifier = Modifier.width(40.dp))
+                    }
+                } else {
+                    Text(
+                        text = stringResource(R.string.settings_api_desc),
+                        fontSize = 13.sp,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                    OutlinedTextField(
+                        value = endpointField,
+                        onValueChange = { v ->
+                            endpointField = v
+                            viewModel.update { it.copy(endpoint = v.text.trim()) }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { androidx.compose.material3.Text(stringResource(R.string.settings_endpoint)) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        colors = fieldColors,
+                    )
+                    Text(
+                        text = stringResource(R.string.settings_api_keys_hint),
+                        fontSize = 12.sp,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                    apiKeyFields.forEachIndexed { index, field ->
+                        val canAdd = index == apiKeyFields.lastIndex && apiKeyFields.size < ApiKeyStore.MAX_KEYS
+                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            if (canAdd) {
+                                IconButton(onClick = viewModel::addApiKeyField, modifier = Modifier.size(40.dp)) {
+                                    Icon(Icons.Outlined.Add, contentDescription = stringResource(R.string.settings_add_key), tint = Booth.Accent)
+                                }
+                            } else Spacer(modifier = Modifier.width(40.dp))
+                            OutlinedTextField(
+                                value = field,
+                                onValueChange = { viewModel.updateApiKeyField(index, it) },
+                                modifier = Modifier.weight(1f),
+                                label = { androidx.compose.material3.Text(stringResource(R.string.settings_api_key_n, index + 1)) },
+                                singleLine = true,
+                                visualTransformation = if (revealKey) VisualTransformation.None else PasswordVisualTransformation(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = fieldColors,
+                            )
+                            if (index > 0) {
+                                IconButton(onClick = { viewModel.removeApiKeyField(index) }, modifier = Modifier.size(40.dp)) {
+                                    Icon(Icons.Outlined.Remove, contentDescription = stringResource(R.string.settings_remove_key), tint = Booth.Danger)
+                                }
+                            } else Spacer(modifier = Modifier.width(40.dp))
                         }
                     }
-                }
-
-                TextButton(
-                    text = stringResource(
-                        if (revealKey) R.string.settings_hide else R.string.settings_show,
-                    ),
-                    onClick = { revealKey = !revealKey },
-                )
-
-                OutlinedTextField(
-                    value = modelField,
-                    onValueChange = { v ->
-                        modelField = v
-                        viewModel.update { it.copy(modelId = v.text.trim()) }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { androidx.compose.material3.Text(stringResource(R.string.settings_model_id)) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
-                    colors = fieldColors,
-                )
-                Button(
-                    onClick = {
-                        viewModel.saveApiKeys()
-                        viewModel.testConnection()
-                    },
-                    enabled = !testing,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColorsPrimary(),
-                ) {
-                    Text(
-                        text = stringResource(
-                            if (testing) R.string.settings_testing else R.string.settings_save_and_test,
-                        ),
-                        fontWeight = FontWeight.SemiBold,
+                    TextButton(
+                        text = stringResource(if (revealKey) R.string.settings_hide else R.string.settings_show),
+                        onClick = { revealKey = !revealKey },
+                    )
+                    OutlinedTextField(
+                        value = modelField,
+                        onValueChange = { v ->
+                            modelField = v
+                            viewModel.update { it.copy(modelId = v.text.trim()) }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { androidx.compose.material3.Text(stringResource(R.string.settings_model_id)) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        colors = fieldColors,
+                    )
+                    Button(
+                        onClick = { viewModel.saveApiKeys(); viewModel.testConnection() },
+                        enabled = !testing,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColorsPrimary(),
+                    ) {
+                        Text(
+                            text = stringResource(if (testing) R.string.settings_testing else R.string.settings_save_and_test),
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    TextButton(
+                        text = stringResource(R.string.settings_save_key_only),
+                        onClick = viewModel::saveApiKeys,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                TextButton(
-                    text = stringResource(R.string.settings_save_key_only),
-                    onClick = viewModel::saveApiKeys,
-                    modifier = Modifier.fillMaxWidth(),
-                )
                 if (!testResult.isNullOrBlank()) {
                     val resultText = testResult.orEmpty()
                     val hasOk = resultText.contains("✅")
@@ -381,135 +303,6 @@ fun SettingsScreen(
                             else -> MiuixTheme.colorScheme.onSurface.copy(alpha = 0.85f)
                         },
                     )
-                }
-            }
-        }
-
-        SmallTitle(
-            text = stringResource(R.string.settings_gemini_flash_test),
-            modifier = Modifier.padding(horizontal = 24.dp),
-        )
-        SectionCard {
-            SettingSwitchRow(
-                title = stringResource(R.string.settings_gemini_flash_test),
-                summary = stringResource(R.string.settings_gemini_flash_test_summary),
-                checked = settings.geminiFlashTestMode,
-                onCheckedChange = { enabled ->
-                    viewModel.update { it.copy(geminiFlashTestMode = enabled) }
-                },
-            )
-        }
-
-        SmallTitle(
-            text = stringResource(R.string.settings_flash_source_language),
-            modifier = Modifier.padding(horizontal = 24.dp),
-        )
-        SectionCard {
-            Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                listOf(
-                    UserSettings.Defaults.GEMINI_FLASH_SOURCE_LANGUAGE_JAPANESE to
-                        R.string.gemini_flash_source_japanese,
-                    UserSettings.Defaults.GEMINI_FLASH_SOURCE_LANGUAGE_CHINESE to
-                        R.string.gemini_flash_source_chinese,
-                ).forEach { (locale, labelRes) ->
-                    val selected = settings.geminiFlashSourceLanguage == locale
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                viewModel.update { it.copy(geminiFlashSourceLanguage = locale) }
-                            }
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(selected = selected, onClick = null)
-                        Text(
-                            text = stringResource(labelRes),
-                            modifier = Modifier.padding(start = 10.dp),
-                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                            color = if (selected) Booth.Accent else MiuixTheme.colorScheme.onSurface,
-                        )
-                    }
-                }
-                Text(
-                    text = stringResource(R.string.settings_flash_source_language_summary),
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    fontSize = 12.sp,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
-            }
-        }
-
-        SmallTitle(
-            text = stringResource(R.string.settings_flash_prompt),
-            modifier = Modifier.padding(horizontal = 24.dp),
-        )
-        SectionCard {
-            Column(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text(
-                    text = settings.geminiFlashSystemInstructions,
-                    fontSize = 13.sp,
-                    maxLines = 5,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
-                Text(
-                    text = stringResource(R.string.settings_flash_prompt_summary),
-                    fontSize = 12.sp,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
-                Button(
-                    onClick = {
-                        flashPromptDraft = settings.geminiFlashSystemInstructions
-                        showFlashPromptDialog = true
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColorsPrimary(),
-                ) {
-                    Text(
-                        text = stringResource(R.string.settings_flash_prompt_edit),
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-            }
-        }
-
-        SmallTitle(
-            text = "Custom prompt",
-            modifier = Modifier.padding(horizontal = 24.dp),
-        )
-        SectionCard {
-            Column(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text(
-                    text = if (settings.customPrompt.isBlank()) {
-                        "ยังไม่ได้ตั้ง (ใช้โหมดแปลปกติ)"
-                    } else {
-                        settings.customPrompt
-                    },
-                    fontSize = 13.sp,
-                    maxLines = 4,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
-                Text(
-                    text = "ใช้ได้กับโมเดล Live ปกติเท่านั้น (ใส่ Model ID เอง) " +
-                        "โมเดล live-translate ไม่รับ prompt",
-                    fontSize = 12.sp,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
-                Button(
-                    onClick = {
-                        promptDraft = settings.customPrompt
-                        showPromptDialog = true
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColorsPrimary(),
-                ) {
-                    Text(text = "แก้ไข prompt", fontWeight = FontWeight.SemiBold)
                 }
             }
         }
