@@ -9,6 +9,8 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -30,6 +32,8 @@ import com.livetranslate.app.data.SupportedLanguages
 import com.livetranslate.app.data.UserSettings
 import com.livetranslate.app.live.LiveTranslateClient
 import com.livetranslate.app.live.GeminiFlashTranslationClient
+import com.livetranslate.app.live.OfflineWhisperClient
+import com.livetranslate.app.live.OfflineTranslationClient
 import java.io.ByteArrayOutputStream
 import com.livetranslate.app.overlay.SubtitleOverlayController
 import com.livetranslate.app.ui.main.MainActivity
@@ -82,6 +86,13 @@ class SubtitleSessionService : Service() {
     private val recognitionHandler = Handler(Looper.getMainLooper())
     private val translationMutex = Mutex()
     private val flashTranslationClient = GeminiFlashTranslationClient()
+    private var offlineWhisperClient: OfflineWhisperClient? = null
+    private var offlineTranslationClient: OfflineTranslationClient? = null
+    private var offlineTranslationJob: Job? = null
+    private var offlineAudioQueue: Channel<ByteArray>? = null
+    private var offlineAudioBuffer = ByteArrayOutputStream()
+    private val offlineAudioBufferLock = Any()
+    private val preparedOfflineLanguages = mutableSetOf<String>()
     private var recognitionIntent: Intent? = null
     private var recognitionRestartPending = false
 
@@ -176,11 +187,6 @@ class SubtitleSessionService : Service() {
         startAsForeground()
 
         val app = application as LiveTranslateApp
-        if (!app.apiKeyStore.hasApiKey()) {
-            SessionBus.setStatus(SessionBus.Status.Error, AppStrings.get(R.string.msg_need_api_key))
-            stopSelf()
-            return
-        }
 
         sessionJob = scope.launch {
             try {
@@ -348,20 +354,29 @@ class SubtitleSessionService : Service() {
 
             yield()
             currentCoroutineContext().ensureActive()
-            // Rotate keys: try first available via round-robin start index
+            // Use cloud translation when both a validated connection and an API key exist.
+            // Otherwise switch to the on-device Whisper + ML Kit pipeline automatically.
+            val online = hasValidatedInternet()
             val key = app.apiKeyStore.nextRotatedKey()
-            if (key.isBlank()) {
-                SessionBus.setStatus(SessionBus.Status.Error, AppStrings.get(R.string.msg_need_api_key))
-                stopEverything(AppStrings.get(R.string.msg_need_api_key), error = true)
-                return
-            }
-            if (currentSettings.geminiFlashTestMode) {
+            if (online && key.isNotBlank() && currentSettings.geminiFlashTestMode) {
                 startFlashAudioCapture(key)
                 SessionBus.setStatus(
                     SessionBus.Status.Running,
                     getString(R.string.gemini_flash_test_running),
                 )
                 return
+            }
+            if (!online || key.isBlank()) {
+                startOfflineAudioCapture()
+                return
+            }
+            // Prepare the local ASR model in the background while cloud captions are active,
+            // so the first offline session does not need to fetch 142 MB without connectivity.
+            offlineWhisperClient = OfflineWhisperClient(this@SubtitleSessionService)
+            offlineTranslationClient = OfflineTranslationClient(this@SubtitleSessionService)
+            ioScope.launch {
+                runCatching { offlineWhisperClient?.prepareModel() }
+                    .onFailure { Log.w(TAG, "Whisper model prefetch skipped", it) }
             }
             client.connect(
                 LiveTranslateClient.SessionConfig(
@@ -378,6 +393,108 @@ class SubtitleSessionService : Service() {
                     customPrompt = currentSettings.customPrompt,
                 ),
             )
+    }
+
+    private fun hasValidatedInternet(): Boolean {
+        val manager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = manager.activeNetwork ?: return false
+        val capabilities = manager.getNetworkCapabilities(network) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
+    /**
+     * Offline path: captured playback PCM -> WAV chunks -> multilingual Whisper
+     * (automatic source-language detection) -> cached ML Kit source-to-Thai model.
+     */
+    private fun startOfflineAudioCapture() {
+        val queue = Channel<ByteArray>(Channel.UNLIMITED)
+        offlineAudioQueue = queue
+        synchronized(offlineAudioBufferLock) { offlineAudioBuffer = ByteArrayOutputStream() }
+        val whisper = offlineWhisperClient ?: OfflineWhisperClient(this).also { offlineWhisperClient = it }
+        val translator = offlineTranslationClient ?: OfflineTranslationClient(this).also { offlineTranslationClient = it }
+
+        offlineTranslationJob = scope.launch {
+            try {
+                if (!whisper.hasModel) {
+                    if (!hasValidatedInternet()) {
+                        error("ยังไม่มีโมเดลเสียงออฟไลน์ กรุณาเชื่อมต่ออินเทอร์เน็ตหนึ่งครั้งเพื่อดาวน์โหลดโมเดล")
+                    }
+                    SessionBus.setStatus(SessionBus.Status.Starting, "กำลังดาวน์โหลดโมเดลเสียงออฟไลน์ (ประมาณ 142 MB)…")
+                    whisper.prepareModel()
+                }
+                SessionBus.setStatus(SessionBus.Status.Starting, "กำลังเตรียมระบบรู้จำเสียงออฟไลน์…")
+                whisper.loadModel()
+                SessionBus.setStatus(SessionBus.Status.Running, "กำลังฟังเสียงวิดีโอแบบออฟไลน์")
+                for (pcm in queue) {
+                    if (stopping) break
+                    val recognized = whisper.transcribe(pcm)
+                    if (recognized.isBlank()) continue
+                    appendTranscript(accumulatedInput, recognized)
+                    appendFull(fullInput, recognized)
+                    publishCaptionUpdate(inputChanged = true, outputChanged = false)
+                    val sourceLanguage = translator.detectLanguage(recognized)
+                    val translated = when {
+                        sourceLanguage == null -> recognized
+                        sourceLanguage == "th" -> recognized
+                        else -> translator.downloadAndTranslate(recognized, sourceLanguage)
+                    }
+                    if (translated.isNotBlank()) {
+                        appendTranscript(accumulatedOutput, translated)
+                        appendFull(fullOutput, translated)
+                        publishCaptionUpdate(inputChanged = false, outputChanged = true)
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                Log.e(TAG, "Offline transcription failed", t)
+                stopEverything(t.message ?: "ระบบแปลออฟไลน์ทำงานไม่สำเร็จ", error = true)
+            }
+        }
+
+        val onPcm: (ByteArray) -> Unit = { pcm ->
+            val chunks = mutableListOf<ByteArray>()
+            synchronized(offlineAudioBufferLock) {
+                offlineAudioBuffer.write(pcm)
+                while (offlineAudioBuffer.size() >= OFFLINE_AUDIO_CHUNK_BYTES) {
+                    val all = offlineAudioBuffer.toByteArray()
+                    chunks += all.copyOfRange(0, OFFLINE_AUDIO_CHUNK_BYTES)
+                    offlineAudioBuffer.reset()
+                    offlineAudioBuffer.write(all, OFFLINE_AUDIO_CHUNK_BYTES, all.size - OFFLINE_AUDIO_CHUNK_BYTES)
+                }
+            }
+            chunks.forEach { queue.trySend(it) }
+        }
+        val onError: (String) -> Unit = { message -> scope.launch { stopEverything(message, error = true) } }
+        try {
+            when (audioSourceMode) {
+                AudioSourceMode.MEDIA -> {
+                    val projection = mediaProjection ?: error(AppStrings.get(R.string.error_missing_projection))
+                    val capturer = SystemAudioCapturer(ioScope)
+                    mediaCapturer = capturer
+                    capturer.start(projection, onPcm, onError)
+                }
+                AudioSourceMode.MIC -> {
+                    val capturer = MicAudioCapturer(ioScope)
+                    micCapturer = capturer
+                    capturer.start(onPcm, onError)
+                }
+                AudioSourceMode.MEDIA_AND_MIC -> {
+                    val projection = mediaProjection ?: error(AppStrings.get(R.string.error_missing_projection))
+                    val mixer = PcmMixer(onPcm)
+                    pcmMixer = mixer
+                    val media = SystemAudioCapturer(ioScope)
+                    mediaCapturer = media
+                    media.start(projection, { mixer.offerMedia(it) }, onError)
+                    val mic = MicAudioCapturer(ioScope)
+                    micCapturer = mic
+                    mic.start({ mixer.offerMic(it) }, onError)
+                }
+            }
+        } catch (t: Throwable) {
+            stopEverything(t.message ?: AppStrings.get(R.string.error_capture_start_failed), error = true)
+        }
     }
 
     /** Gemini Flash consumes PCM from the selected capture source, including system Media. */
@@ -855,6 +972,15 @@ class SubtitleSessionService : Service() {
         micCapturer = null
         pcmMixer?.close()
         pcmMixer = null
+        offlineAudioQueue?.close()
+        offlineAudioQueue = null
+        offlineTranslationJob?.cancel()
+        offlineTranslationJob = null
+        offlineWhisperClient?.close()
+        offlineWhisperClient = null
+        offlineTranslationClient?.close()
+        offlineTranslationClient = null
+        preparedOfflineLanguages.clear()
         liveClient?.close()
         liveClient?.destroy()
         liveClient = null
