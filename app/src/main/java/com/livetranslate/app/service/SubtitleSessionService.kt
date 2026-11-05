@@ -94,6 +94,7 @@ class SubtitleSessionService : Service() {
     private var offlineAudioBuffer = ByteArrayOutputStream()
     private val offlineAudioBufferLock = Any()
     private val preparedOfflineLanguages = mutableSetOf<String>()
+    private var lastOfflineTranscriptKey: String? = null
     private var recognitionIntent: Intent? = null
     private var recognitionRestartPending = false
 
@@ -441,6 +442,7 @@ class SubtitleSessionService : Service() {
         val whisper = offlineWhisperClient ?: OfflineWhisperClient(this).also { offlineWhisperClient = it }
         val translator = offlineTranslationClient ?: OfflineTranslationClient(this).also { offlineTranslationClient = it }
 
+        lastOfflineTranscriptKey = null
         offlineTranslationJob = scope.launch {
             try {
                 if (!whisper.hasModel) {
@@ -458,8 +460,20 @@ class SubtitleSessionService : Service() {
                 startOfflineCapture(queue)
                 for (pcm in queue) {
                     if (stopping) break
-                    val recognized = whisper.transcribe(pcm)
-                    if (recognized.isBlank()) continue
+                    val rawTranscript = whisper.transcribe(pcm)
+                    val recognized = cleanOfflineTranscript(rawTranscript)
+                    if (recognized.isBlank()) {
+                        Log.d(TAG, "Whisper returned blank audio or non-speech markers; skipping chunk")
+                        continue
+                    }
+                    val transcriptKey = recognized
+                        .lowercase()
+                        .replace(Regex("[^\\p{L}\\p{N}]+"), "")
+                    if (transcriptKey.isBlank() || transcriptKey == lastOfflineTranscriptKey) {
+                        Log.d(TAG, "Skipping repeated offline transcript chunk")
+                        continue
+                    }
+                    lastOfflineTranscriptKey = transcriptKey
                     appendTranscript(accumulatedInput, recognized)
                     appendFull(fullInput, recognized)
                     publishCaptionUpdate(inputChanged = true, outputChanged = false)
@@ -482,6 +496,19 @@ class SubtitleSessionService : Service() {
                 stopEverything(t.message ?: "ระบบแปลออฟไลน์ทำงานไม่สำเร็จ", error = true)
             }
         }
+    }
+
+    private fun cleanOfflineTranscript(raw: String): String {
+        val text = raw.trim()
+        if (text.isBlank()) return ""
+        // Whisper emits this marker for silent chunks; never expose it as a caption.
+        if (text.contains("[BLANK_AUDIO]", ignoreCase = true) ||
+            text.contains("[blank audio]", ignoreCase = true)
+        ) return ""
+        return text
+            .replace(Regex("<\\|[^|]+\\|>"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
     }
 
     private fun startOfflineCapture(queue: Channel<ByteArray>) {
