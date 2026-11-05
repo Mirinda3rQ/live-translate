@@ -124,11 +124,9 @@ class SubtitleSessionService : Service() {
             }
             ACTION_START -> {
                 val modeName = intent.getStringExtra(EXTRA_AUDIO_SOURCE)
-                audioSourceMode = if (currentSettings.translationProvider == TranslationProvider.GROQ) {
-                    AudioSourceMode.MEDIA
-                } else {
-                    AudioSourceMode.fromStorage(modeName)
-                }
+                // This app session is intended for live captions from on-device media playback.
+                // Never route session audio from the microphone, regardless of provider or stale settings.
+                audioSourceMode = AudioSourceMode.MEDIA
                 val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
                 val data = if (Build.VERSION.SDK_INT >= 33) {
                     intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
@@ -438,7 +436,8 @@ class SubtitleSessionService : Service() {
                 }
             }
         }
-        val onPcm: (ByteArray) -> Unit = { pcm ->
+        val onPcm: (ByteArray) -> Unit = onPcm@{ pcm ->
+            if (!hasAudibleMediaAudio(pcm)) return@onPcm
             val chunks = mutableListOf<ByteArray>()
             synchronized(flashAudioBufferLock) {
                 flashAudioBuffer.write(pcm)
@@ -680,17 +679,17 @@ class SubtitleSessionService : Service() {
                         ?: throw IllegalStateException(AppStrings.get(R.string.error_missing_projection))
                     val cap = SystemAudioCapturer(ioScope)
                     mediaCapturer = cap
-                    cap.start(projection, { pcm -> client.sendPcm16le(pcm, 16_000) }, onCaptureError)
+                    cap.start(projection, { pcm -> if (hasAudibleMediaAudio(pcm)) client.sendPcm16le(pcm, 16_000) }, onCaptureError)
                 }
                 AudioSourceMode.MIC -> {
                     val mic = MicAudioCapturer(ioScope)
                     micCapturer = mic
-                    mic.start({ pcm -> client.sendPcm16le(pcm, 16_000) }, onCaptureError)
+                    mic.start({ pcm -> if (hasAudibleMediaAudio(pcm)) client.sendPcm16le(pcm, 16_000) }, onCaptureError)
                 }
                 AudioSourceMode.MEDIA_AND_MIC -> {
                     val projection = mediaProjection
                         ?: throw IllegalStateException(AppStrings.get(R.string.error_missing_projection))
-              val mixer = PcmMixer { mixed -> client.sendPcm16le(mixed, 16_000) }
+              val mixer = PcmMixer { mixed -> if (hasAudibleMediaAudio(mixed)) client.sendPcm16le(mixed, 16_000) }
                     pcmMixer = mixer
                     val media = SystemAudioCapturer(ioScope)
                     mediaCapturer = media
@@ -747,6 +746,26 @@ class SubtitleSessionService : Service() {
                 output = if (outputChanged) outDisplay else null,
             )
         }
+    }
+
+    /** Reject near-silent PCM before any provider sees it; input is signed 16-bit mono PCM. */
+    private fun hasAudibleMediaAudio(pcm: ByteArray): Boolean {
+        if (pcm.size < 2) return false
+        var sumSquares = 0.0
+        var peak = 0
+        var samples = 0
+        var i = 0
+        while (i + 1 < pcm.size) {
+            val sample = ((pcm[i + 1].toInt() shl 8) or (pcm[i].toInt() and 0xff)).toShort().toInt()
+            val magnitude = kotlin.math.abs(sample)
+            if (magnitude > peak) peak = magnitude
+            sumSquares += sample.toDouble() * sample.toDouble()
+            samples++
+            i += 2
+        }
+        if (samples == 0) return false
+        val rms = kotlin.math.sqrt(sumSquares / samples)
+        return rms >= 120.0 || peak >= 450
     }
 
     private fun appendTranscript(buffer: StringBuilder, chunk: String) {
