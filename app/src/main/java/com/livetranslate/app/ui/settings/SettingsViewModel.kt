@@ -77,6 +77,8 @@ class SettingsViewModel(
         _testResult.value = "✅"
     }
 
+    fun clearTestResult() { _testResult.value = null }
+
     fun update(transform: (UserSettings) -> UserSettings) {
         viewModelScope.launch { settingsRepository.update(transform) }
     }
