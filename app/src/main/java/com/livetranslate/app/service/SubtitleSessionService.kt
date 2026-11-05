@@ -369,7 +369,10 @@ class SubtitleSessionService : Service() {
             }
             if (currentSettings.geminiFlashTestMode) {
                 startFlashAudioCapture(key)
-                SessionBus.setStatus(SessionBus.Status.Running, getString(R.string.gemini_flash_test_running))
+                SessionBus.setStatus(
+                SessionBus.Status.Running,
+                if (currentSettings.translationProvider == TranslationProvider.GROQ) "Groq กำลังแปลเสียงเป็นภาษาไทย" else getString(R.string.gemini_flash_test_running),
+            )
                 return
             }
             client.connect(
@@ -421,7 +424,7 @@ class SubtitleSessionService : Service() {
                             throw e
                         } catch (t: Throwable) {
                             Log.e(TAG, "Audio translation failed", t)
-                            val message = getString(R.string.gemini_flash_translation_failed, t.message.orEmpty())
+                            val message = "การแปลเสียงล้มเหลว: ${t.message.orEmpty()}"
                             stopEverything(message, error = true)
                             break
                         }
