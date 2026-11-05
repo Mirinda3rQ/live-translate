@@ -419,7 +419,7 @@ class SubtitleSessionService : Service() {
                                     apiKey = apiKey,
                                 )
                             }
-                            if (!stopping) {
+                            if (!stopping && translated.isNotBlank()) {
                                 appendTranscript(accumulatedOutput, translated)
                                 appendFull(fullOutput, translated)
                                 publishCaptionUpdate(inputChanged = false, outputChanged = true)
