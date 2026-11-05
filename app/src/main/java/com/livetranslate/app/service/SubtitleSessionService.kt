@@ -448,6 +448,8 @@ class SubtitleSessionService : Service() {
                 SessionBus.setStatus(SessionBus.Status.Starting, "กำลังเตรียมระบบรู้จำเสียงออฟไลน์…")
                 whisper.loadModel()
                 SessionBus.setStatus(SessionBus.Status.Running, "กำลังฟังเสียงวิดีโอแบบออฟไลน์")
+                // Do not capture until the model is ready; otherwise the bounded
+                // queue would discard the beginning of the video during download.
                 startOfflineCapture(queue)
                 for (pcm in queue) {
                     if (stopping) break
@@ -475,53 +477,51 @@ class SubtitleSessionService : Service() {
                 stopEverything(t.message ?: "ระบบแปลออฟไลน์ทำงานไม่สำเร็จ", error = true)
             }
         }
-
+    }
 
     private fun startOfflineCapture(queue: Channel<ByteArray>) {
-            val onPcm: (ByteArray) -> Unit = { pcm ->
-                val chunks = mutableListOf<ByteArray>()
-                synchronized(offlineAudioBufferLock) {
-                    offlineAudioBuffer.write(pcm)
-                    while (offlineAudioBuffer.size() >= OFFLINE_AUDIO_CHUNK_BYTES) {
-                        val all = offlineAudioBuffer.toByteArray()
-                        chunks += all.copyOfRange(0, OFFLINE_AUDIO_CHUNK_BYTES)
-                        offlineAudioBuffer.reset()
-                        offlineAudioBuffer.write(all, OFFLINE_AUDIO_CHUNK_BYTES, all.size - OFFLINE_AUDIO_CHUNK_BYTES)
-                    }
+        val onPcm: (ByteArray) -> Unit = { pcm ->
+            val chunks = mutableListOf<ByteArray>()
+            synchronized(offlineAudioBufferLock) {
+                offlineAudioBuffer.write(pcm)
+                while (offlineAudioBuffer.size() >= OFFLINE_AUDIO_CHUNK_BYTES) {
+                    val all = offlineAudioBuffer.toByteArray()
+                    chunks += all.copyOfRange(0, OFFLINE_AUDIO_CHUNK_BYTES)
+                    offlineAudioBuffer.reset()
+                    offlineAudioBuffer.write(all, OFFLINE_AUDIO_CHUNK_BYTES, all.size - OFFLINE_AUDIO_CHUNK_BYTES)
                 }
-                chunks.forEach { queue.trySend(it) }
             }
-            val onError: (String) -> Unit = { message -> scope.launch { stopEverything(message, error = true) } }
-            try {
-                when (audioSourceMode) {
-                    AudioSourceMode.MEDIA -> {
-                        val projection = mediaProjection ?: error(AppStrings.get(R.string.error_missing_projection))
-                        val capturer = SystemAudioCapturer(ioScope)
-                        mediaCapturer = capturer
-                        capturer.start(projection, onPcm, onError)
-                    }
-                    AudioSourceMode.MIC -> {
-                        val capturer = MicAudioCapturer(ioScope)
-                        micCapturer = capturer
-                        capturer.start(onPcm, onError)
-                    }
-                    AudioSourceMode.MEDIA_AND_MIC -> {
-                        val projection = mediaProjection ?: error(AppStrings.get(R.string.error_missing_projection))
-                        val mixer = PcmMixer(onPcm)
-                        pcmMixer = mixer
-                        val media = SystemAudioCapturer(ioScope)
-                        mediaCapturer = media
-                        media.start(projection, { mixer.offerMedia(it) }, onError)
-                        val mic = MicAudioCapturer(ioScope)
-                        micCapturer = mic
-                        mic.start({ mixer.offerMic(it) }, onError)
-                    }
-                }
-            } catch (t: Throwable) {
-                stopEverything(t.message ?: AppStrings.get(R.string.error_capture_start_failed), error = true)
-            }
+            chunks.forEach { queue.trySend(it) }
         }
-    
+        val onError: (String) -> Unit = { message -> scope.launch { stopEverything(message, error = true) } }
+        try {
+            when (audioSourceMode) {
+                AudioSourceMode.MEDIA -> {
+                    val projection = mediaProjection ?: error(AppStrings.get(R.string.error_missing_projection))
+                    val capturer = SystemAudioCapturer(ioScope)
+                    mediaCapturer = capturer
+                    capturer.start(projection, onPcm, onError)
+                }
+                AudioSourceMode.MIC -> {
+                    val capturer = MicAudioCapturer(ioScope)
+                    micCapturer = capturer
+                    capturer.start(onPcm, onError)
+                }
+                AudioSourceMode.MEDIA_AND_MIC -> {
+                    val projection = mediaProjection ?: error(AppStrings.get(R.string.error_missing_projection))
+                    val mixer = PcmMixer(onPcm)
+                    pcmMixer = mixer
+                    val media = SystemAudioCapturer(ioScope)
+                    mediaCapturer = media
+                    media.start(projection, { mixer.offerMedia(it) }, onError)
+                    val mic = MicAudioCapturer(ioScope)
+                    micCapturer = mic
+                    mic.start({ mixer.offerMic(it) }, onError)
+                }
+            }
+        } catch (t: Throwable) {
+            stopEverything(t.message ?: AppStrings.get(R.string.error_capture_start_failed), error = true)
+        }
     }
 
     /** Gemini Flash consumes PCM from the selected capture source, including system Media. */
