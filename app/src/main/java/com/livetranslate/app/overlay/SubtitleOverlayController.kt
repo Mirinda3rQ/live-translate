@@ -829,10 +829,10 @@ class SubtitleOverlayController(
             }
             setOnClickListener { onSettingsChanged(transform) }
         }
-        presetRow.addView(presetButton("Compact") {
+        presetRow.addView(presetButton("กะทัดรัด · ตัวเล็ก") {
             it.copy(fontSizeSp = 14f, backgroundAlpha = 0.45f, bilingual = false)
         })
-        presetRow.addView(presetButton("Readable") {
+        presetRow.addView(presetButton("อ่านง่าย · ตัวใหญ่") {
             it.copy(fontSizeSp = 26f, backgroundAlpha = 0.8f, bilingual = true)
         })
         panel.addView(presetRow)
