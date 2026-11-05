@@ -179,15 +179,6 @@ class SubtitleSessionService : Service() {
         startAsForeground()
 
         val app = application as LiveTranslateApp
-        val hasProviderKey = if (app.settingsRepository.settings.first().translationProvider == TranslationProvider.GROQ) {
-            app.apiKeyStore.getGroqApiKey().isNotBlank()
-        } else app.apiKeyStore.hasApiKey()
-        if (!hasProviderKey) {
-            SessionBus.setStatus(SessionBus.Status.Error, AppStrings.get(R.string.msg_need_api_key))
-            stopSelf()
-            return
-        }
-
         sessionJob = scope.launch {
             try {
                 startSessionInternal(app, resultCode, data)
@@ -208,6 +199,14 @@ class SubtitleSessionService : Service() {
         data: Intent?,
     ) {
         currentSettings = app.settingsRepository.settings.first()
+        val hasProviderKey = if (currentSettings.translationProvider == TranslationProvider.GROQ) {
+            app.apiKeyStore.getGroqApiKey().isNotBlank()
+        } else app.apiKeyStore.hasApiKey()
+        if (!hasProviderKey) {
+            SessionBus.setStatus(SessionBus.Status.Error, AppStrings.get(R.string.msg_need_api_key))
+            stopSelf()
+            return
+        }
         currentCoroutineContext().ensureActive()
         // audioSourceMode already set from Intent EXTRA in onStartCommand.
 
