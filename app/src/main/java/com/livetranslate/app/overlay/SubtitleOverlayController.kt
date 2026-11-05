@@ -585,11 +585,11 @@ class SubtitleOverlayController(
                 (38 * density).roundToInt(), rowHeight,
                 Gravity.END or Gravity.CENTER_VERTICAL,
             ).apply { rightMargin = (106 * density).roundToInt() }
-            text = "TUNE"
+            text = "ปรับ"
             textSize = 9f
             setTextColor(Color.argb(210, 255, 255, 255))
             gravity = Gravity.CENTER
-            contentDescription = "Quick subtitle controls"
+            contentDescription = "ปรับขนาดตัวอักษร พื้นหลัง และเสียง"
             setOnClickListener {
                 suppressNextToggle = true
                 toggleSettingsPanel(density)
@@ -800,13 +800,13 @@ class SubtitleOverlayController(
             line.addView(slider)
             panel.addView(line)
         }
-        addSlider("Font", (settings.fontSizeSp.toInt() - 12).coerceIn(0, 20), 20,
+        addSlider("ตัวอักษร", (settings.fontSizeSp.toInt() - 12).coerceIn(0, 20), 20,
             { "${it + 12} sp" }) { current, progress -> current.copy(fontSizeSp = (progress + 12).toFloat()) }
         fontSlider = (panel.getChildAt(panel.childCount - 1) as LinearLayout).getChildAt(1) as SeekBar
-        addSlider("Background", (settings.backgroundAlpha * 100).toInt().coerceIn(0, 95), 95,
+        addSlider("พื้นหลัง", (settings.backgroundAlpha * 100).toInt().coerceIn(0, 95), 95,
             { "$it%" }) { current, progress -> current.copy(backgroundAlpha = progress / 100f) }
         backgroundSlider = (panel.getChildAt(panel.childCount - 1) as LinearLayout).getChildAt(1) as SeekBar
-        addSlider("Voice volume", (settings.translatedVolume * 100).toInt().coerceIn(0, 200), 200,
+        addSlider("ระดับเสียง", (settings.translatedVolume * 100).toInt().coerceIn(0, 200), 200,
             { "$it%" }) { current, progress -> current.copy(translatedVolume = progress / 100f) }
         volumeSlider = (panel.getChildAt(panel.childCount - 1) as LinearLayout).getChildAt(1) as SeekBar
         val presetRow = LinearLayout(context).apply {
@@ -870,7 +870,7 @@ class SubtitleOverlayController(
             xAtSettingsOpenPx = params.x
             panel.visibility = View.VISIBLE
             val screenH = screenMetrics().second
-            params.height = clampHeight(params.height + (216 * density).roundToInt(), screenH)
+            params.height = clampHeight(params.height + (270 * density).roundToInt(), screenH)
             params.y = params.y.coerceAtMost((screenH - params.height).coerceAtLeast(0))
             settingsPanelAddedPx = params.height - heightBeforeSettingsPx
             adjustedYAtSettingsOpenPx = params.y
