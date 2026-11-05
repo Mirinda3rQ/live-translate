@@ -18,6 +18,8 @@ class OfflineWhisperClient(context: Context) {
     private val modelFile = File(File(appContext.filesDir, "models"), MODEL_NAME)
     private var loadedModel: WhisperModel? = null
 
+    val hasModel: Boolean get() = modelFile.exists() && modelFile.length() > MIN_MODEL_BYTES
+
     suspend fun prepareModel() = withContext(Dispatchers.IO) {
         if (modelFile.exists() && modelFile.length() > MIN_MODEL_BYTES) return@withContext
         modelFile.parentFile?.mkdirs()
