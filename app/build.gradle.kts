@@ -134,4 +134,6 @@ dependencies {
     // On-device language identification and downloadable offline translation models.
     implementation("com.google.mlkit:language-id:17.0.6")
     implementation("com.google.mlkit:translate:17.0.3")
+    // Local multilingual speech recognition from captured system-audio chunks.
+    implementation("dev.ffmpegkit-maintained:whisper-android:1.0.0")
 }
