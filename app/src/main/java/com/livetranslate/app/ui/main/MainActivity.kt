@@ -39,6 +39,7 @@ import com.livetranslate.app.LiveTranslateApp
 import com.livetranslate.app.R
 import com.livetranslate.app.data.AudioSourceMode
 import com.livetranslate.app.data.UserSettings
+import com.livetranslate.app.data.TranslationProvider
 import com.livetranslate.app.service.SessionBus
 import com.livetranslate.app.service.SubtitleSessionService
 import com.livetranslate.app.ui.settings.SettingsScreen
@@ -140,7 +141,12 @@ class MainActivity : ComponentActivity() {
 
                 fun requestStartSubtitle() {
                     try {
-                        if (!app.apiKeyStore.hasApiKey()) {
+                        val hasProviderKey = if (settings.translationProvider == TranslationProvider.GROQ) {
+                            app.apiKeyStore.getGroqApiKey().isNotBlank()
+                        } else {
+                            app.apiKeyStore.hasApiKey()
+                        }
+                        if (!hasProviderKey) {
                             SessionBus.setStatus(
                                 SessionBus.Status.Error,
                                 getString(R.string.msg_need_api_key),
