@@ -60,7 +60,6 @@ jobs:
       - name: Unit tests
         id: unit_tests
         if: github.event_name != 'workflow_dispatch' || inputs.run_tests
-        continue-on-error: true
         run: ./gradlew :app:testDebugUnitTest --stacktrace
 
       - name: Build debug APK
@@ -102,7 +101,7 @@ jobs:
             echo "- Branch: \`${{ github.ref_name }}\`"
             echo "- Commit: \`${{ github.sha }}\`"
             echo "- Trigger: \`${{ github.event_name }}\`"
-            echo "- Unit tests outcome: \`${{ steps.unit_tests.outcome || 'skipped' }}\` (test failures do not block APK packaging)"
+            echo "- Unit tests outcome: \`${{ steps.unit_tests.outcome || 'skipped' }}\` (test failures block APK packaging)"
             echo
             echo "Open this run → **Artifacts** → **LiveTranslate-debug** to download \`LiveTranslate-debug.apk\`."
           } >> "$GITHUB_STEP_SUMMARY"
