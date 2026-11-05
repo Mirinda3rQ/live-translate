@@ -242,6 +242,20 @@ class SubtitleSessionService : Service() {
                 },
                 // The overlay is the caption surface; closing it ends the session
                 // (transcripts are still kept for export via markSessionFinished).
+                onSettingsChanged = { transform ->
+                    val updated = transform(currentSettings)
+                    currentSettings = updated
+                    overlay?.updateSettings(updated)
+                    ioScope.launch {
+                        runCatching {
+                            app.settingsRepository.update { updated }
+                        }.onFailure {
+                            Log.e(TAG, "Could not persist floating subtitle settings", it)
+                        }
+                    }
+                    audioPlayer?.setVolume(updated.translatedVolume)
+                    applyTranslatedAudioEnabled()
+                },
                 onCloseRequested = { stopEverything(AppStrings.get(R.string.status_closed_by_user)) },
                 onSettingsRequested = {
                     val settingsIntent = Intent(this@SubtitleSessionService, MainActivity::class.java).apply {
