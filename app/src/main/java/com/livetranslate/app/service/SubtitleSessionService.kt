@@ -398,6 +398,7 @@ class SubtitleSessionService : Service() {
 
     /** Gemini Flash consumes PCM from the selected capture source, including system Media. */
     private fun startFlashAudioCapture(apiKey: String) {
+        val app = application as LiveTranslateApp
         val queue = Channel<ByteArray>(Channel.UNLIMITED)
         flashAudioQueue = queue
         synchronized(flashAudioBufferLock) { flashAudioBuffer = ByteArrayOutputStream() }
