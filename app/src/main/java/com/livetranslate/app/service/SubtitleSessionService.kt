@@ -243,6 +243,15 @@ class SubtitleSessionService : Service() {
                 // The overlay is the caption surface; closing it ends the session
                 // (transcripts are still kept for export via markSessionFinished).
                 onCloseRequested = { stopEverything(AppStrings.get(R.string.status_closed_by_user)) },
+                onSettingsRequested = {
+                    val settingsIntent = Intent(this@SubtitleSessionService, MainActivity::class.java).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                        putExtra(MainActivity.EXTRA_OPEN_SETTINGS, true)
+                    }
+                    runCatching { startActivity(settingsIntent) }
+                        .onFailure { Log.e(TAG, "Could not open app settings from overlay", it) }
+                },
+                onRestartRequested = { restartAppFromOverlay() },
             )
             overlay = overlayController
             overlayController.show(currentSettings)
@@ -875,6 +884,22 @@ class SubtitleSessionService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
+    }
+
+    /**
+     * Relaunch the main app after ending the active media-capture session.
+     * The overlay is a user-tapped surface, so this action is initiated directly
+     * from an explicit user interaction rather than a background timer.
+     */
+    private fun restartAppFromOverlay() {
+        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+            ?: Intent(this, MainActivity::class.java)
+        stopEverything(AppStrings.get(R.string.status_restarting))
+        Handler(Looper.getMainLooper()).postDelayed({
+            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            runCatching { startActivity(launchIntent) }
+                .onFailure { Log.e(TAG, "Could not relaunch app", it) }
+        }, 350L)
     }
 
     private fun stopEverything(message: String, error: Boolean = false) {
