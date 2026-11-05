@@ -71,6 +71,8 @@ fun SettingsScreen(
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val apiKeyFields by viewModel.apiKeyFields.collectAsStateWithLifecycle()
     val groqApiKey by viewModel.groqApiKey.collectAsStateWithLifecycle()
+    val groqChatModel by viewModel.groqChatModel.collectAsStateWithLifecycle()
+    val groqSpeechModel by viewModel.groqSpeechModel.collectAsStateWithLifecycle()
     val testResult by viewModel.testResult.collectAsStateWithLifecycle()
     val testing by viewModel.testing.collectAsStateWithLifecycle()
 
@@ -135,7 +137,7 @@ fun SettingsScreen(
             Column(modifier = Modifier.padding(vertical = 6.dp)) {
                 listOf(
                     TranslationProvider.GEMINI to "Gemini Live",
-                    TranslationProvider.GROQ to "Groq (Whisper + Llama)",
+                    TranslationProvider.GROQ to "Groq (Whisper + GPT-OSS / Qwen)",
                 ).forEach { (provider, label) ->
                     val selected = settings.translationProvider == provider
                     Row(
@@ -176,10 +178,33 @@ fun SettingsScreen(
             ) {
                 if (settings.translationProvider == TranslationProvider.GROQ) {
                     Text(
-                        text = "ใช้ Groq Whisper ถอดเสียง และ Llama แปลเป็นไทย • คำหยาบและเนื้อหา 18+ จะแปลตามบริบท ไม่เซ็นเซอร์",
+                        text = "ใช้ Groq Whisper ถอดเสียงจาก Media Only และเลือกโมเดลแปลภาษาได้ • คำหยาบและเนื้อหา 18+ จะแปลตามบริบท ไม่เซ็นเซอร์",
                         fontSize = 13.sp,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     )
+                    Text("مصدرเสียง: Media Only", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text("รับเฉพาะเสียงจากวิดีโอ/สื่อที่กำลังเล่น ไม่ใช้ไมโครโฟน", fontSize = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                    Text("โมเดลถอดเสียง (Speech-to-Text)", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    listOf(
+                        "whisper-large-v3-turbo" to "Whisper Large V3 Turbo • เร็ว เหมาะกับแปลสด",
+                        "whisper-large-v3" to "Whisper Large V3 • เน้นความแม่นยำ",
+                    ).forEach { (model, label) ->
+                        Row(Modifier.fillMaxWidth().clickable { viewModel.selectGroqSpeechModel(model) }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = groqSpeechModel == model, onClick = { viewModel.selectGroqSpeechModel(model) })
+                            Text(label, modifier = Modifier.padding(start = 8.dp), fontSize = 12.sp)
+                        }
+                    }
+                    Text("โมเดลแปลภาษา (Text LLM)", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    listOf(
+                        "openai/gpt-oss-120b" to "GPT-OSS 120B • คุณภาพ/บริบทดี",
+                        "openai/gpt-oss-20b" to "GPT-OSS 20B • เร็วกว่า",
+                        "qwen/qwen3.8-27b" to "Qwen 3.8 27B • ตัวเลือกเพิ่มเติม",
+                    ).forEach { (model, label) ->
+                        Row(Modifier.fillMaxWidth().clickable { viewModel.selectGroqChatModel(model) }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = groqChatModel == model, onClick = { viewModel.selectGroqChatModel(model) })
+                            Text(label, modifier = Modifier.padding(start = 8.dp), fontSize = 12.sp)
+                        }
+                    }
                     Text("ภาษาต้นฉบับ", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
