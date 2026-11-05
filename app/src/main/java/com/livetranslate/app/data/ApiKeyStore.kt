@@ -61,6 +61,12 @@ class ApiKeyStore(context: Context) {
 
     fun hasApiKey(): Boolean = getApiKeys().isNotEmpty()
 
+    fun getGroqApiKey(): String = prefs.getString(KEY_GROQ_API, "").orEmpty().trim()
+
+    fun setGroqApiKey(value: String) {
+        prefs.edit().putString(KEY_GROQ_API, value.trim()).apply()
+    }
+
     /**
      * Round-robin pick for a new session. Empty string if none.
      */
@@ -104,6 +110,7 @@ class ApiKeyStore(context: Context) {
         private const val FILE_NAME_FALLBACK = "api_prefs_fallback"
         private const val KEY_API = "api_key"
         private const val KEY_API_LIST = "api_key_list"
+        private const val KEY_GROQ_API = "groq_api_key"
         const val MAX_KEYS = 10
     }
 }
