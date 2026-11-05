@@ -400,21 +400,24 @@ class SubtitleSessionService : Service() {
                 runCatching { offlineWhisperClient?.prepareModel() }
                     .onFailure { Log.w(TAG, "Whisper model prefetch skipped", it) }
             }
-            client.connect(
-                LiveTranslateClient.SessionConfig(
-                    endpoint = currentSettings.endpoint,
-                    apiKey = key,
-                    modelId = currentSettings.modelId,
-                    targetLanguageCode = SupportedLanguages.canonicalOrDefault(
-                        currentSettings.targetLanguageCode,
+            try {
+                client.connect(
+                    LiveTranslateClient.SessionConfig(
+                        endpoint = currentSettings.endpoint,
+                        apiKey = key,
+                        modelId = currentSettings.modelId,
+                        targetLanguageCode = SupportedLanguages.canonicalOrDefault(
+                            currentSettings.targetLanguageCode,
+                        ),
+                        // Echo same-language input so it still produces captions.
+                        echoTargetLanguage = true,
+                        customPrompt = currentSettings.customPrompt,
                     ),
-                    // Official: when input is already the target language, echo
-                    // instead of staying silent so same-language audio still
-                    // produces captions (e.g. Chinese video → Chinese subtitles).
-                    echoTargetLanguage = true,
-                    customPrompt = currentSettings.customPrompt,
-                ),
-            )
+                )
+            } catch (t: Throwable) {
+                Log.w(TAG, "Cloud connection could not start; switching to offline", t)
+                switchToOffline("เชื่อมต่อระบบออนไลน์ไม่สำเร็จ")
+            }
     }
 
     private fun hasValidatedInternet(): Boolean {
@@ -725,15 +728,55 @@ class SubtitleSessionService : Service() {
      * resumable and retries remain, reconnect transparently; otherwise stop.
      */
     private fun handleConnectionLoss(message: String) {
-        if (stopping) return
+        if (stopping || liveClient == null) return
+        if (!hasValidatedInternet()) {
+            switchToOffline("อินเทอร์เน็ตขาดการเชื่อมต่อ กำลังเปลี่ยนเป็นออฟไลน์")
+            return
+        }
         val client = liveClient
         if (client == null || client.lastResumptionHandle == null ||
             reconnectAttempts >= MAX_RECONNECTS
         ) {
-            stopEverything(message, error = true)
+            switchToOffline("ออนไลน์ขัดข้อง กำลังเปลี่ยนเป็นออฟไลน์")
             return
         }
         scheduleReconnect(message)
+    }
+
+    /**
+     * Keep the existing overlay and MediaProjection permission, but replace the
+     * cloud pipeline with local Whisper + ML Kit when cloud service is unusable.
+     */
+    private fun switchToOffline(reason: String) {
+        if (stopping || offlineTranslationJob?.isActive == true) return
+        Log.w(TAG, reason)
+        reconnectJob?.cancel()
+        reconnectJob = null
+        eventsJob?.cancel()
+        eventsJob = null
+
+        mediaCapturer?.stop()
+        mediaCapturer = null
+        micCapturer?.stop()
+        micCapturer = null
+        pcmMixer?.close()
+        pcmMixer = null
+        captureStarted = false
+
+        liveClient?.close()
+        liveClient?.destroy()
+        liveClient = null
+        audioPlayer?.release()
+        audioPlayer = null
+
+        if (offlineWhisperClient == null) {
+            offlineWhisperClient = OfflineWhisperClient(this)
+        }
+        if (offlineTranslationClient == null) {
+            offlineTranslationClient = OfflineTranslationClient(this)
+        }
+        SessionBus.setStatus(SessionBus.Status.Starting, reason)
+        startOfflineAudioCapture()
     }
 
     /**
@@ -748,7 +791,7 @@ class SubtitleSessionService : Service() {
         if (reconnectJob?.isActive == true) return
         val client = liveClient ?: return
         val handle = client.lastResumptionHandle ?: run {
-            stopEverything(reason, error = true)
+            switchToOffline("ไม่สามารถกู้คืนการเชื่อมต่อออนไลน์ กำลังเปลี่ยนเป็นออฟไลน์")
             return
         }
         reconnectAttempts++
@@ -764,23 +807,28 @@ class SubtitleSessionService : Service() {
             val live = liveClient ?: return@launch
             val app = application as LiveTranslateApp
             val key = app.apiKeyStore.nextRotatedKey()
-            if (key.isBlank()) {
-                stopEverything(AppStrings.get(R.string.msg_need_api_key), error = true)
+            if (key.isBlank() || !hasValidatedInternet()) {
+                switchToOffline("ออนไลน์ไม่พร้อมใช้งาน กำลังเปลี่ยนเป็นออฟไลน์")
                 return@launch
             }
-            live.connect(
-                LiveTranslateClient.SessionConfig(
-                    endpoint = currentSettings.endpoint,
-                    apiKey = key,
-                    modelId = currentSettings.modelId,
-                    targetLanguageCode = SupportedLanguages.canonicalOrDefault(
-                        currentSettings.targetLanguageCode,
+            try {
+                live.connect(
+                    LiveTranslateClient.SessionConfig(
+                        endpoint = currentSettings.endpoint,
+                        apiKey = key,
+                        modelId = currentSettings.modelId,
+                        targetLanguageCode = SupportedLanguages.canonicalOrDefault(
+                            currentSettings.targetLanguageCode,
+                        ),
+                        echoTargetLanguage = true,
+                        resumptionHandle = handle,
+                        customPrompt = currentSettings.customPrompt,
                     ),
-                    echoTargetLanguage = true,
-                    resumptionHandle = handle,
-                    customPrompt = currentSettings.customPrompt,
-                ),
-            )
+                )
+            } catch (t: Throwable) {
+                Log.w(TAG, "Cloud reconnect failed; switching to offline", t)
+                switchToOffline("เชื่อมต่อออนไลน์ซ้ำไม่สำเร็จ กำลังเปลี่ยนเป็นออฟไลน์")
+            }
         }
     }
 
