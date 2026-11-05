@@ -436,7 +436,7 @@ class SubtitleSessionService : Service() {
      * (automatic source-language detection) -> cached ML Kit source-to-Thai model.
      */
     private fun startOfflineAudioCapture() {
-        val queue = Channel<ByteArray>(capacity = 2, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+        val queue = Channel<ByteArray>(capacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
         offlineAudioQueue = queue
         synchronized(offlineAudioBufferLock) { offlineAudioBuffer = ByteArrayOutputStream() }
         val whisper = offlineWhisperClient ?: OfflineWhisperClient(this).also { offlineWhisperClient = it }
@@ -1135,7 +1135,7 @@ class SubtitleSessionService : Service() {
         private const val RECONNECT_BASE_DELAY_MS = 1_500L
         private const val RECOGNITION_RESTART_DELAY_MS = 350L
         private const val FLASH_AUDIO_CHUNK_BYTES = 160_000
-        private const val OFFLINE_AUDIO_CHUNK_BYTES = 320_000 // 10 seconds, PCM16/16 kHz mono
+        private const val OFFLINE_AUDIO_CHUNK_BYTES = 128_000 // 4 seconds, PCM16/16 kHz mono
         private const val JAPANESE_LOCALE = "ja-JP"
         private const val CHINESE_LOCALE = "zh-CN"
         const val ACTION_START = "com.livetranslate.app.action.START_SUBTITLE"
