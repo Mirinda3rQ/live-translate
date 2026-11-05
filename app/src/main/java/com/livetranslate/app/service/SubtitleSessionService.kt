@@ -1023,6 +1023,12 @@ class SubtitleSessionService : Service() {
 
     override fun onDestroy() {
         releaseJapaneseSpeechRecognition()
+        offlineAudioQueue?.close()
+        offlineTranslationJob?.cancel()
+        offlineWhisperClient?.close()
+        offlineWhisperClient = null
+        offlineTranslationClient?.close()
+        offlineTranslationClient = null
         mediaCapturer?.stop()
         micCapturer?.stop()
         pcmMixer?.close()
