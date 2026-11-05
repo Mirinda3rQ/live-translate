@@ -182,7 +182,7 @@ fun SettingsScreen(
                         fontSize = 13.sp,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     )
-                    Text("مصدرเสียง: Media Only", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text("แหล่งเสียง: Media Only", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     Text("รับเฉพาะเสียงจากวิดีโอ/สื่อที่กำลังเล่น ไม่ใช้ไมโครโฟน", fontSize = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
                     Text("โมเดลถอดเสียง (Speech-to-Text)", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     listOf(
