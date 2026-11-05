@@ -25,13 +25,17 @@ class GroqTranslationClient {
     ): String = withContext(Dispatchers.IO) {
         require(apiKey.isNotBlank()) { "Missing Groq API key" }
         require(pcm16kMono.size >= 16_000) { "Not enough audio for transcription" }
+        // Ignore near-silent media chunks. Whisper can hallucinate common phrases
+        // (for example, polite sign-offs) when given silence or very faint noise.
+        if (isNearSilence(pcm16kMono)) return@withContext ""
 
         val wav = pcm16kToWav(pcm16kMono, 16_000)
         val audioBody = wav.toRequestBody("audio/wav".toMediaType())
         val multipart = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("model", speechModel)
-            .addFormDataPart("response_format", "json")
+            .addFormDataPart("response_format", "verbose_json")
+            .addFormDataPart("temperature", "0")
             .addFormDataPart("file", "audio.wav", audioBody)
             .build()
         val transcriptionRequest = Request.Builder()
@@ -46,13 +50,30 @@ class GroqTranslationClient {
                 val detail = runCatching { JSONObject(body).optString("error") }.getOrNull().orEmpty()
                 throw IllegalStateException(detail.ifBlank { "Groq transcription failed (HTTP ${response.code})" })
             }
-            JSONObject(body).optString("text").trim()
+            val result = JSONObject(body)
+            val segments = result.optJSONArray("segments")
+            // If Whisper marks every returned segment as non-speech, discard it.
+            // If the provider omits segment confidence fields, keep the transcript.
+            if (segments != null && segments.length() > 0) {
+                var confidenceFields = 0
+                var likelyNonSpeech = 0
+                for (i in 0 until segments.length()) {
+                    val segment = segments.optJSONObject(i) ?: continue
+                    if (segment.has("no_speech_prob")) {
+                        confidenceFields++
+                        if (segment.optDouble("no_speech_prob", 0.0) >= 0.60) likelyNonSpeech++
+                    }
+                }
+                if (confidenceFields > 0 && likelyNonSpeech == confidenceFields) return@use ""
+            }
+            result.optString("text").trim()
         }
         if (transcript.isBlank()) return@withContext ""
 
         val system = """
             You are a professional subtitle translator working from the detected source language into Thai.
-            Translate the source speech into natural Thai, faithfully and completely.
+            Translate only words that are explicitly present in the supplied transcript into natural Thai.
+            The transcript may be incomplete; never fill gaps, guess missing words, or add polite endings.
             Preserve the speaker's intent, context, tone, register, slang, insults, swear words,
             profanity, sexual language, and explicit 18+ meaning whenever present in the source.
             Never censor, mask, omit, soften, sanitize, or replace words with asterisks.
@@ -115,6 +136,23 @@ class GroqTranslationClient {
                 "Groq API connected"
             }
         }
+    }
+
+    private fun isNearSilence(pcm: ByteArray): Boolean {
+        var sumSquares = 0.0
+        var peak = 0
+        val samples = pcm.size / 2
+        if (samples == 0) return true
+        var i = 0
+        while (i + 1 < pcm.size) {
+            val sample = ((pcm[i + 1].toInt() shl 8) or (pcm[i].toInt() and 0xff)).toShort().toInt()
+            val magnitude = kotlin.math.abs(sample)
+            if (magnitude > peak) peak = magnitude
+            sumSquares += sample.toDouble() * sample.toDouble()
+            i += 2
+        }
+        val rms = kotlin.math.sqrt(sumSquares / samples)
+        return rms < 180.0 && peak < 600
     }
 
     private fun pcm16kToWav(pcm: ByteArray, sampleRate: Int): ByteArray {
