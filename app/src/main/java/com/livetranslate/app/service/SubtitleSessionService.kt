@@ -406,6 +406,8 @@ class SubtitleSessionService : Service() {
                                 groqTranslationClient.translatePcmToThai(
                                     pcm16kMono = pcm,
                                     apiKey = apiKey,
+                                    speechModel = app.apiKeyStore.getGroqSpeechModel(),
+                                    chatModel = app.apiKeyStore.getGroqChatModel(),
                                 )
                             } else {
                                 flashTranslationClient.translateAudioToThai(
