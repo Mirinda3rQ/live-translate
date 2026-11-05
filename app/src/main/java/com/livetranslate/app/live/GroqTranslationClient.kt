@@ -86,6 +86,9 @@ class GroqTranslationClient {
             .put("messages", JSONArray()
                 .put(JSONObject().put("role", "system").put("content", system))
                 .put(JSONObject().put("role", "user").put("content", transcript)))
+            // GPT-OSS may spend part of its completion budget on reasoning.
+            // Reserve enough output tokens so a valid translation is not truncated to empty.
+            .put("max_completion_tokens", 512)
             .toString()
             .toRequestBody(JSON_MEDIA_TYPE)
         val chatRequest = Request.Builder()
@@ -102,11 +105,13 @@ class GroqTranslationClient {
                 }.getOrNull().orEmpty()
                 throw IllegalStateException(detail.ifBlank { "Groq translation failed (HTTP ${response.code})" })
             }
+            // A blank completion means this audio chunk produced no caption.
+            // Do not fail the entire live-caption session for one empty model response.
             JSONObject(body).optJSONArray("choices")
                 ?.optJSONObject(0)?.optJSONObject("message")
-                ?.optString("content")?.trim()
-                ?.ifBlank { throw IllegalStateException("Groq returned an empty translation") }
-                ?: throw IllegalStateException("Groq returned no translation")
+                ?.optString("content")
+                ?.trim()
+                .orEmpty()
         }
     }
 
