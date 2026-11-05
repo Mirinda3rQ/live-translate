@@ -16,6 +16,7 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 
 class UserSettingsRepository(private val context: Context) {
     private object Keys {
+        val provider = stringPreferencesKey("translation_provider")
         val endpoint = stringPreferencesKey("endpoint")
         val modelId = stringPreferencesKey("model_id")
         val targetLanguage = stringPreferencesKey("target_language")
@@ -42,6 +43,7 @@ class UserSettingsRepository(private val context: Context) {
     suspend fun update(transform: (UserSettings) -> UserSettings) {
         context.dataStore.edit { prefs ->
             val next = transform(prefs.toSettings())
+            prefs[Keys.provider] = next.translationProvider.name
             prefs[Keys.endpoint] = next.endpoint
             prefs[Keys.modelId] = next.modelId
             prefs[Keys.targetLanguage] = next.targetLanguageCode
@@ -73,6 +75,7 @@ class UserSettingsRepository(private val context: Context) {
     }
 
     private fun Preferences.toSettings(): UserSettings = UserSettings(
+        translationProvider = TranslationProvider.fromStorage(this[Keys.provider]),
         endpoint = this[Keys.endpoint] ?: UserSettings.Defaults.ENDPOINT,
         modelId = this[Keys.modelId] ?: UserSettings.Defaults.MODEL_ID,
         targetLanguageCode = SupportedLanguages.canonicalOrDefault(
