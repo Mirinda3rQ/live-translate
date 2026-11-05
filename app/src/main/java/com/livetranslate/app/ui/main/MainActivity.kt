@@ -291,7 +291,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun effectiveAudioSource(settings: UserSettings): AudioSourceMode =
-        settings.audioSourceMode
+        if (settings.translationProvider == TranslationProvider.GROQ) AudioSourceMode.MEDIA else settings.audioSourceMode
 
     companion object {
         private const val TAG = "MainActivity"
