@@ -20,6 +20,8 @@ class GroqTranslationClient {
     suspend fun translatePcmToThai(
         pcm16kMono: ByteArray,
         apiKey: String,
+        speechModel: String = "whisper-large-v3-turbo",
+        chatModel: String = "openai/gpt-oss-120b",
     ): String = withContext(Dispatchers.IO) {
         require(apiKey.isNotBlank()) { "Missing Groq API key" }
         require(pcm16kMono.size >= 16_000) { "Not enough audio for transcription" }
@@ -28,7 +30,7 @@ class GroqTranslationClient {
         val audioBody = wav.toRequestBody("audio/wav".toMediaType())
         val multipart = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
-            .addFormDataPart("model", "whisper-large-v3-turbo")
+            .addFormDataPart("model", speechModel)
             .addFormDataPart("response_format", "json")
             .addFormDataPart("file", "audio.wav", audioBody)
             .build()
@@ -58,7 +60,7 @@ class GroqTranslationClient {
             Keep names, numbers, and sentence meaning accurate. Return only the Thai translation.
         """.trimIndent()
         val chatBody = JSONObject()
-            .put("model", "openai/gpt-oss-120b")
+            .put("model", chatModel)
             .put("reasoning_effort", "low")
             .put("messages", JSONArray()
                 .put(JSONObject().put("role", "system").put("content", system))
@@ -87,11 +89,11 @@ class GroqTranslationClient {
         }
     }
 
-    suspend fun testConnection(apiKey: String): Result<String> = withContext(Dispatchers.IO) {
+    suspend fun testConnection(apiKey: String, chatModel: String = "openai/gpt-oss-120b"): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             require(apiKey.isNotBlank()) { "Missing Groq API key" }
             val body = JSONObject()
-                .put("model", "openai/gpt-oss-120b")
+                .put("model", chatModel)
                 .put("reasoning_effort", "low")
                 .put("messages", JSONArray().put(
                     JSONObject().put("role", "user").put("content", "Reply with OK only.")
