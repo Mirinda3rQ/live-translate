@@ -59,6 +59,8 @@ class SubtitleOverlayController(
     private val onGeometryChanged: (x: Int, y: Int, widthDp: Int, heightDp: Int) -> Unit,
     private val onSettingsChanged: ((UserSettings) -> UserSettings) -> Unit = {},
     private val onCloseRequested: () -> Unit = {},
+    private val onSettingsRequested: () -> Unit = {},
+    private val onRestartRequested: () -> Unit = {},
 ) {
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private var rootView: View? = null
@@ -453,8 +455,8 @@ class SubtitleOverlayController(
         val (screenW, screenH, _) = screenMetrics()
         params.width = clampWidth(params.width, screenW)
         params.height = clampHeight(params.height, screenH)
-        params.x += dx
-        params.y += dy
+        params.x = safeCoerce(params.x + dx, 0, max(0, screenW - params.width))
+        params.y = safeCoerce(params.y + dy, 0, max(0, screenH - params.height))
         runCatching { windowManager.updateViewLayout(root, params) }
             .onFailure { Log.e(TAG, "drag updateViewLayout failed", it) }
     }
@@ -471,8 +473,8 @@ class SubtitleOverlayController(
         if (settingsPanelOpen) {
             heightBeforeSettingsPx = (newH - settingsPanelAddedPx).coerceAtLeast(MIN_HEIGHT_PX)
         }
-        params.x = (cx - newW / 2f).roundToInt()
-        params.y = (cy - newH / 2f).roundToInt()
+        params.x = safeCoerce((cx - newW / 2f).roundToInt(), 0, max(0, screenW - newW))
+        params.y = safeCoerce((cy - newH / 2f).roundToInt(), 0, max(0, screenH - newH))
         runCatching { windowManager.updateViewLayout(root, params) }
             .onFailure { Log.e(TAG, "pinch updateViewLayout failed", it) }
     }
@@ -524,7 +526,7 @@ class SubtitleOverlayController(
 
         // Thin grabber row: drag anywhere on the row to move; close button at the
         // far right. The whole strip reveals on tap and auto-hides when idle.
-        val rowHeight = (22 * density).roundToInt()
+        val rowHeight = (34 * density).roundToInt()
         grabberRowHeightPx = rowHeight
         val grabberRow = FrameLayout(context).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -561,19 +563,53 @@ class SubtitleOverlayController(
             }
         }
         closeButton = close
-        val gear = TextView(context).apply {
+        val restart = TextView(context).apply {
             layoutParams = FrameLayout.LayoutParams(
                 (34 * density).roundToInt(), rowHeight,
                 Gravity.END or Gravity.CENTER_VERTICAL,
             ).apply { rightMargin = (27 * density).roundToInt() }
-            text = "SET"
-            textSize = 10f
+            text = "↻"
+            textSize = 18f
+            setTextColor(Color.argb(220, 255, 255, 255))
+            gravity = Gravity.CENTER
+            contentDescription = "Restart app"
+            setOnClickListener {
+                suppressNextToggle = true
+                onRestartRequested()
+            }
+        }
+        grabberRow.addView(restart)
+
+        val tune = TextView(context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                (38 * density).roundToInt(), rowHeight,
+                Gravity.END or Gravity.CENTER_VERTICAL,
+            ).apply { rightMargin = (106 * density).roundToInt() }
+            text = "TUNE"
+            textSize = 9f
             setTextColor(Color.argb(210, 255, 255, 255))
             gravity = Gravity.CENTER
-            contentDescription = "Subtitle settings"
+            contentDescription = "Quick subtitle controls"
             setOnClickListener {
                 suppressNextToggle = true
                 toggleSettingsPanel(density)
+            }
+        }
+        grabberRow.addView(tune)
+
+        val gear = TextView(context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                (34 * density).roundToInt(), rowHeight,
+                Gravity.END or Gravity.CENTER_VERTICAL,
+            ).apply { rightMargin = (148 * density).roundToInt() }
+            text = "⚙"
+            textSize = 17f
+            setTextColor(Color.argb(220, 255, 255, 255))
+            gravity = Gravity.CENTER
+            contentDescription = "Open app settings"
+            setOnClickListener {
+                suppressNextToggle = true
+                onSettingsRequested()
             }
         }
         settingsButton = gear
