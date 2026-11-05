@@ -892,13 +892,17 @@ class SubtitleSessionService : Service() {
      * from an explicit user interaction rather than a background timer.
      */
     private fun restartAppFromOverlay() {
-        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
-            ?: Intent(this, MainActivity::class.java)
+        // MediaProjection grants are one-session tokens. Relaunch the activity
+        // and let it request a fresh system-capture grant, then auto-start the
+        // session after the user confirms the Android prompt.
+        val launchIntent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            putExtra(MainActivity.EXTRA_AUTO_START, true)
+        }
         stopEverything(AppStrings.get(R.string.status_restarting))
         Handler(Looper.getMainLooper()).postDelayed({
-            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
             runCatching { startActivity(launchIntent) }
-                .onFailure { Log.e(TAG, "Could not relaunch app", it) }
+                .onFailure { Log.e(TAG, "Could not relaunch app for automatic restart", it) }
         }, 350L)
     }
 
