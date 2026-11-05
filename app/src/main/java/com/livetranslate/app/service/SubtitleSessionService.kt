@@ -406,7 +406,6 @@ class SubtitleSessionService : Service() {
                                 groqTranslationClient.translatePcmToThai(
                                     pcm16kMono = pcm,
                                     apiKey = apiKey,
-                                    sourceLanguage = if (currentSettings.geminiFlashSourceLanguage == UserSettings.Defaults.GEMINI_FLASH_SOURCE_LANGUAGE_CHINESE) "zh" else "ja",
                                 )
                             } else {
                                 flashTranslationClient.translateAudioToThai(
