@@ -202,6 +202,15 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                // Restart from the floating overlay returns here and starts
+                // the media-capture permission flow automatically (no manual Start tap).
+                LaunchedEffect(intent?.getBooleanExtra(EXTRA_AUTO_START, false)) {
+                    if (intent?.getBooleanExtra(EXTRA_AUTO_START, false) == true) {
+                        intent?.removeExtra(EXTRA_AUTO_START)
+                        requestStartSubtitle()
+                    }
+                }
+
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
                     containerColor = MiuixTheme.colorScheme.surface,
@@ -318,5 +327,6 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val TAG = "MainActivity"
         const val EXTRA_OPEN_SETTINGS = "com.livetranslate.app.extra.OPEN_SETTINGS"
+        const val EXTRA_AUTO_START = "com.livetranslate.app.extra.AUTO_START"
     }
 }
