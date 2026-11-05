@@ -140,14 +140,8 @@ class MainActivity : ComponentActivity() {
 
                 fun requestStartSubtitle() {
                     try {
-                        if (!app.apiKeyStore.hasApiKey()) {
-                            SessionBus.setStatus(
-                                SessionBus.Status.Error,
-                                getString(R.string.msg_need_api_key),
-                            )
-                            tab = 1
-                            return
-                        }
+                        // API keys are optional: the service automatically uses
+                        // local Whisper + ML Kit when no key is configured.
                         val mode = effectiveAudioSource(settings)
                         val needed = buildList {
                             if (mode.needsMicrophone) {
