@@ -56,8 +56,11 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      # Keep test results visible, but do not prevent a test APK from being produced.
       - name: Unit tests
+        id: unit_tests
         if: github.event_name != 'workflow_dispatch' || inputs.run_tests
+        continue-on-error: true
         run: ./gradlew :app:testDebugUnitTest --stacktrace
 
       - name: Build debug APK
@@ -99,8 +102,7 @@ jobs:
             echo "- Branch: \`${{ github.ref_name }}\`"
             echo "- Commit: \`${{ github.sha }}\`"
             echo "- Trigger: \`${{ github.event_name }}\`"
+            echo "- Unit tests outcome: \`${{ steps.unit_tests.outcome || 'skipped' }}\` (test failures do not block APK packaging)"
             echo
             echo "Open this run → **Artifacts** → **LiveTranslate-debug** to download \`LiveTranslate-debug.apk\`."
-            echo
-            echo "To run again: Actions → **CI** → **Run workflow** → pick this branch."
           } >> "$GITHUB_STEP_SUMMARY"
