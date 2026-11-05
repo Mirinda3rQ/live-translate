@@ -499,14 +499,12 @@ class SubtitleSessionService : Service() {
     }
 
     private fun cleanOfflineTranscript(raw: String): String {
-        val text = raw.trim()
-        if (text.isBlank()) return ""
-        // Whisper emits this marker for silent chunks; never expose it as a caption.
-        if (text.contains("[BLANK_AUDIO]", ignoreCase = true) ||
-            text.contains("[blank audio]", ignoreCase = true)
-        ) return ""
-        return text
+        if (raw.isBlank()) return ""
+        // Remove Whisper's silence marker without discarding valid speech in the same chunk.
+        return raw
+            .replace(Regex("\\[\\s*BLANK_AUDIO\\s*\\]", RegexOption.IGNORE_CASE), " ")
             .replace(Regex("<\\|[^|]+\\|>"), " ")
+            .replace(Regex("\\((?:หัวเราะ|เสียงหัวเราะ)\\)(?:\\s*\\(?(?:หัวเราะ|เสียงหัวเราะ)\\)?)*"), " ")
             .replace(Regex("\\s+"), " ")
             .trim()
     }
