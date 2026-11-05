@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Subtitles
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +51,7 @@ import com.livetranslate.app.ui.subtitle.SubtitleViewModel
 import com.livetranslate.app.ui.subtitle.SubtitleViewModelFactory
 import com.livetranslate.app.ui.theme.AppTheme
 import com.livetranslate.app.util.PermissionUtils
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.NavigationBar
 import top.yukonga.miuix.kmp.basic.NavigationBarDisplayMode
@@ -58,6 +60,8 @@ import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 class MainActivity : ComponentActivity() {
+    private val settingsNavigationRequest = MutableStateFlow(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -66,7 +70,16 @@ class MainActivity : ComponentActivity() {
         setContent {
             AppTheme {
                 val scope = rememberCoroutineScope()
-                var tab by remember { mutableIntStateOf(0) }
+                var tab by remember {
+                    mutableIntStateOf(if (intent?.getBooleanExtra(EXTRA_OPEN_SETTINGS, false) == true) 1 else 0)
+                }
+                val openSettingsRequest by settingsNavigationRequest.collectAsStateWithLifecycle()
+                LaunchedEffect(openSettingsRequest) {
+                    if (openSettingsRequest) {
+                        tab = 1
+                        settingsNavigationRequest.value = false
+                    }
+                }
 
                 val subtitleVm: SubtitleViewModel = viewModel(
                     factory = SubtitleViewModelFactory(
@@ -267,6 +280,15 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_OPEN_SETTINGS, false)) {
+            settingsNavigationRequest.value = true
+            intent.removeExtra(EXTRA_OPEN_SETTINGS)
+        }
+    }
+
     private fun continueStartAfterPermissions(
         mode: AudioSourceMode,
         launchProjection: (Intent) -> Unit,
@@ -295,5 +317,6 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
+        const val EXTRA_OPEN_SETTINGS = "com.livetranslate.app.extra.OPEN_SETTINGS"
     }
 }
