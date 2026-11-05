@@ -13,14 +13,13 @@ import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 
 /**
- * Chunked Groq path: Whisper transcription followed by faithful Japanese/Chinese-to-Thai translation.
+ * Chunked Groq path: Whisper auto-detects the spoken language, then GPT-OSS translates it into Thai.
  * This is near-live (short audio chunks), not the Gemini Live WebSocket protocol.
  */
 class GroqTranslationClient {
     suspend fun translatePcmToThai(
         pcm16kMono: ByteArray,
         apiKey: String,
-        sourceLanguage: String = "ja",
     ): String = withContext(Dispatchers.IO) {
         require(apiKey.isNotBlank()) { "Missing Groq API key" }
         require(pcm16kMono.size >= 16_000) { "Not enough audio for transcription" }
@@ -30,7 +29,6 @@ class GroqTranslationClient {
         val multipart = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("model", "whisper-large-v3-turbo")
-            .addFormDataPart("language", sourceLanguage)
             .addFormDataPart("response_format", "json")
             .addFormDataPart("file", "audio.wav", audioBody)
             .build()
@@ -60,8 +58,8 @@ class GroqTranslationClient {
             Keep names, numbers, and sentence meaning accurate. Return only the Thai translation.
         """.trimIndent()
         val chatBody = JSONObject()
-            .put("model", "llama-3.3-70b-versatile")
-            .put("temperature", 0.2)
+            .put("model", "openai/gpt-oss-120b")
+            .put("reasoning_effort", "low")
             .put("messages", JSONArray()
                 .put(JSONObject().put("role", "system").put("content", system))
                 .put(JSONObject().put("role", "user").put("content", transcript)))
@@ -93,11 +91,12 @@ class GroqTranslationClient {
         runCatching {
             require(apiKey.isNotBlank()) { "Missing Groq API key" }
             val body = JSONObject()
-                .put("model", "llama-3.3-70b-versatile")
+                .put("model", "openai/gpt-oss-120b")
+                .put("reasoning_effort", "low")
                 .put("messages", JSONArray().put(
                     JSONObject().put("role", "user").put("content", "Reply with OK only.")
                 ))
-                .put("max_tokens", 8)
+                .put("max_completion_tokens", 64)
                 .toString().toRequestBody(JSON_MEDIA_TYPE)
             val request = Request.Builder()
                 .url("https://api.groq.com/openai/v1/chat/completions")
