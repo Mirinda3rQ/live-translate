@@ -140,6 +140,7 @@ fun SettingsScreen(
                     val selected = settings.translationProvider == provider
                     Row(
                         modifier = Modifier.fillMaxWidth().clickable {
+                            viewModel.clearTestResult()
                             viewModel.update { it.copy(translationProvider = provider) }
                         }.padding(horizontal = 16.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
