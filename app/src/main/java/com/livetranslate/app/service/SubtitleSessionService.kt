@@ -290,6 +290,27 @@ class SubtitleSessionService : Service() {
                             startCapturePipeline(client)
                         }
                         is LiveTranslateClient.LiveEvent.InputTranscript -> {
+                            // Cache the matching on-device translation pack while online,
+                            // so the same detected language can be translated later offline.
+                            if (hasValidatedInternet() && event.text.isNotBlank()) {
+                                val localTranslator = offlineTranslationClient
+                                    ?: OfflineTranslationClient(this@SubtitleSessionService).also {
+                                        offlineTranslationClient = it
+                                    }
+                                ioScope.launch {
+                                    val source = event.languageCode?.takeIf { it.isNotBlank() }
+                                        ?: runCatching { localTranslator.detectLanguage(event.text) }.getOrNull()
+                                    if (source != null && source != "th") {
+                                        val shouldPrepare = synchronized(preparedOfflineLanguages) {
+                                            preparedOfflineLanguages.add(source)
+                                        }
+                                        if (shouldPrepare) {
+                                            runCatching { localTranslator.prepareLanguageModel(source) }
+                                                .onFailure { Log.w(TAG, "Offline translation model prefetch failed for $source", it) }
+                                        }
+                                    }
+                                }
+                            }
                             appendTranscript(accumulatedInput, event.text)
                             appendFull(fullInput, event.text)
                             val target = currentSettings.targetLanguageCode
