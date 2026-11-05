@@ -401,6 +401,7 @@ class SubtitleSessionService : Service() {
         flashAudioQueue = queue
         synchronized(flashAudioBufferLock) { flashAudioBuffer = ByteArrayOutputStream() }
         flashTranslationJob = scope.launch {
+            var consecutiveTranslationFailures = 0
             for (pcm in queue) {
                 translationMutex.withLock {
                     if (!stopping) {
@@ -427,10 +428,16 @@ class SubtitleSessionService : Service() {
                         } catch (e: CancellationException) {
                             throw e
                         } catch (t: Throwable) {
-                            Log.e(TAG, "Audio translation failed", t)
-                            val message = "การแปลเสียงล้มเหลว: ${t.message.orEmpty()}"
-                            stopEverything(message, error = true)
-                            break
+                            consecutiveTranslationFailures++
+                            Log.e(TAG, "Audio translation failed (consecutive=$consecutiveTranslationFailures)", t)
+                            // A failed request for one media chunk must not terminate
+                            // the foreground session or dismiss the subtitle overlay.
+                            // Keep capturing Media audio and retry on the next chunk.
+                            SessionBus.setStatus(
+                                SessionBus.Status.Running,
+                                "แปลเสียงช่วงนี้ไม่สำเร็จ กำลังลองช่วงถัดไป (" + t.message.orEmpty() + ")",
+                            )
+                            delay(750L)
                         }
                     }
                 }
