@@ -88,7 +88,7 @@ class GroqTranslationClient {
                 .put(JSONObject().put("role", "user").put("content", transcript)))
             // GPT-OSS may spend part of its completion budget on reasoning.
             // Reserve enough output tokens so a valid translation is not truncated to empty.
-            .put("max_completion_tokens", 512)
+            .put("max_completion_tokens", 256)
             .toString()
             .toRequestBody(JSON_MEDIA_TYPE)
         val chatRequest = Request.Builder()
