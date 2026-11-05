@@ -179,6 +179,22 @@ fun SettingsScreen(
                         fontSize = 13.sp,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     )
+                    Text("ภาษาต้นฉบับ", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    listOf(
+                        UserSettings.Defaults.GEMINI_FLASH_SOURCE_LANGUAGE_JAPANESE to "ญี่ปุ่น",
+                        UserSettings.Defaults.GEMINI_FLASH_SOURCE_LANGUAGE_CHINESE to "จีน",
+                    ).forEach { (locale, label) ->
+                        val selected = settings.geminiFlashSourceLanguage == locale
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                viewModel.update { it.copy(geminiFlashSourceLanguage = locale) }
+                            }.padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = selected, onClick = null)
+                            Text(label, modifier = Modifier.padding(start = 8.dp))
+                        }
+                    }
                     OutlinedTextField(
                         value = groqApiKey,
                         onValueChange = viewModel::updateGroqApiKey,
