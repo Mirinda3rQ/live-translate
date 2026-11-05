@@ -36,6 +36,22 @@ class OfflineTranslationClient(context: Context) {
         }
     }
 
+    suspend fun prepareLanguageModel(sourceLanguageTag: String) {
+        val source = TranslateLanguage.fromLanguageTag(sourceLanguageTag) ?: return
+        if (source == TranslateLanguage.THAI) return
+        val translator = Translation.getClient(
+            TranslatorOptions.Builder()
+                .setSourceLanguage(source)
+                .setTargetLanguage(TranslateLanguage.THAI)
+                .build(),
+        )
+        try {
+            awaitTask(translator.downloadModelIfNeeded(DownloadConditions.Builder().build()))
+        } finally {
+            translator.close()
+        }
+    }
+
     /**
      * Downloads the source-to-Thai model the first time it is needed, then
      * translates entirely on device. The model is managed by Google ML Kit.
