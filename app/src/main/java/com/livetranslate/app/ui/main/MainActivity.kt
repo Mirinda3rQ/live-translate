@@ -290,8 +290,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun effectiveAudioSource(settings: UserSettings): AudioSourceMode =
-        if (settings.translationProvider == TranslationProvider.GROQ) AudioSourceMode.MEDIA else settings.audioSourceMode
+    // Live Caption is specifically for audio playing on this device, never microphone input.
+    private fun effectiveAudioSource(settings: UserSettings): AudioSourceMode = AudioSourceMode.MEDIA
 
     companion object {
         private const val TAG = "MainActivity"
