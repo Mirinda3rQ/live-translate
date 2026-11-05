@@ -40,6 +40,22 @@ class SettingsViewModel(
 
     fun saveGroqApiKey() { apiKeyStore.setGroqApiKey(_groqApiKey.value) }
 
+    private val _groqChatModel = MutableStateFlow(apiKeyStore.getGroqChatModel())
+    val groqChatModel: StateFlow<String> = _groqChatModel.asStateFlow()
+    private val _groqSpeechModel = MutableStateFlow(apiKeyStore.getGroqSpeechModel())
+    val groqSpeechModel: StateFlow<String> = _groqSpeechModel.asStateFlow()
+
+    fun selectGroqChatModel(model: String) {
+        _groqChatModel.value = model
+        apiKeyStore.setGroqChatModel(model)
+        clearTestResult()
+    }
+    fun selectGroqSpeechModel(model: String) {
+        _groqSpeechModel.value = model
+        apiKeyStore.setGroqSpeechModel(model)
+        clearTestResult()
+    }
+
     private val _testResult = MutableStateFlow<String?>(null)
     val testResult: StateFlow<String?> = _testResult.asStateFlow()
 
@@ -92,7 +108,7 @@ class SettingsViewModel(
             _testing.value = true
             saveGroqApiKey()
             _testResult.value = "กำลังทดสอบ Groq..."
-            val result = GroqTranslationClient().testConnection(_groqApiKey.value)
+            val result = GroqTranslationClient().testConnection(_groqApiKey.value, _groqChatModel.value)
             _testResult.value = result.fold({ "✅ $it" }, { "❌ ${it.message}" })
             _testing.value = false
         }
