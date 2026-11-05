@@ -356,6 +356,7 @@ fun SettingsScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
+            if (settings.translationProvider == TranslationProvider.GEMINI) {
             SettingSwitchRow(
                 title = stringResource(R.string.settings_bilingual),
                 summary = stringResource(
@@ -368,6 +369,7 @@ fun SettingsScreen(
                 checked = settings.bilingual,
                 onCheckedChange = { c -> viewModel.update { it.copy(bilingual = c) } },
             )
+            }
             TextButton(
                 text = stringResource(R.string.settings_reset_appearance),
                 onClick = viewModel::resetSubtitleAppearance,
@@ -377,6 +379,7 @@ fun SettingsScreen(
             )
         }
 
+        if (settings.translationProvider == TranslationProvider.GEMINI) {
         SmallTitle(
             text = stringResource(R.string.settings_voice),
             modifier = Modifier.padding(horizontal = 24.dp),
@@ -420,6 +423,8 @@ fun SettingsScreen(
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 )
             }
+        }
+
         }
 
         SmallTitle(
