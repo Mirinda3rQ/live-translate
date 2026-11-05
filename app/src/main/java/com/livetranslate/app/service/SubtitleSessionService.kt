@@ -420,6 +420,7 @@ class SubtitleSessionService : Service() {
                                     apiKey = apiKey,
                                 )
                             }
+                            consecutiveTranslationFailures = 0
                             if (!stopping && translated.isNotBlank()) {
                                 appendTranscript(accumulatedOutput, translated)
                                 appendFull(fullOutput, translated)
