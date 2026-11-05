@@ -51,7 +51,7 @@ class GroqTranslationClient {
         if (transcript.isBlank()) return@withContext ""
 
         val system = """
-            You are a professional Japanese-to-Thai subtitle translator.
+            You are a professional subtitle translator working from the detected source language into Thai.
             Translate the source speech into natural Thai, faithfully and completely.
             Preserve the speaker's intent, context, tone, register, slang, insults, swear words,
             profanity, sexual language, and explicit 18+ meaning whenever present in the source.
