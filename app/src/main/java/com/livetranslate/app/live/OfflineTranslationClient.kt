@@ -2,7 +2,7 @@ package com.livetranslate.app.live
 
 import android.content.Context
 import com.google.mlkit.nl.languageid.LanguageIdentification
-import com.google.mlkit.nl.translate.DownloadConditions
+import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.TranslatorOptions
 import com.google.mlkit.nl.translate.TranslateLanguage
@@ -19,7 +19,6 @@ import kotlin.coroutines.resumeWithException
  * provided by a separate offline ASR engine.
  */
 class OfflineTranslationClient(context: Context) {
-    private val appContext = context.applicationContext
     private val languageIdentifier = LanguageIdentification.getClient()
 
     suspend fun detectLanguage(text: String): String? {
