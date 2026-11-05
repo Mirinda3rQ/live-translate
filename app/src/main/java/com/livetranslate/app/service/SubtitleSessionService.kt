@@ -28,8 +28,10 @@ import com.livetranslate.app.audio.TranslatedAudioPlayer
 import com.livetranslate.app.data.AudioSourceMode
 import com.livetranslate.app.data.SupportedLanguages
 import com.livetranslate.app.data.UserSettings
+import com.livetranslate.app.data.TranslationProvider
 import com.livetranslate.app.live.LiveTranslateClient
 import com.livetranslate.app.live.GeminiFlashTranslationClient
+import com.livetranslate.app.live.GroqTranslationClient
 import java.io.ByteArrayOutputStream
 import com.livetranslate.app.overlay.SubtitleOverlayController
 import com.livetranslate.app.ui.main.MainActivity
@@ -82,6 +84,7 @@ class SubtitleSessionService : Service() {
     private val recognitionHandler = Handler(Looper.getMainLooper())
     private val translationMutex = Mutex()
     private val flashTranslationClient = GeminiFlashTranslationClient()
+    private val groqTranslationClient = GroqTranslationClient()
     private var recognitionIntent: Intent? = null
     private var recognitionRestartPending = false
 
@@ -176,7 +179,10 @@ class SubtitleSessionService : Service() {
         startAsForeground()
 
         val app = application as LiveTranslateApp
-        if (!app.apiKeyStore.hasApiKey()) {
+        val hasProviderKey = if (app.settingsRepository.settings.first().translationProvider == TranslationProvider.GROQ) {
+            app.apiKeyStore.getGroqApiKey().isNotBlank()
+        } else app.apiKeyStore.hasApiKey()
+        if (!hasProviderKey) {
             SessionBus.setStatus(SessionBus.Status.Error, AppStrings.get(R.string.msg_need_api_key))
             stopSelf()
             return
@@ -243,7 +249,7 @@ class SubtitleSessionService : Service() {
             val client = LiveTranslateClient()
             liveClient = client
 
-            val player = if (currentSettings.geminiFlashTestMode) null else TranslatedAudioPlayer()
+            val player = if (currentSettings.translationProvider == TranslationProvider.GROQ || currentSettings.geminiFlashTestMode) null else TranslatedAudioPlayer()
             audioPlayer = player
             applyTranslatedAudioEnabled()
             player?.setVolume(currentSettings.translatedVolume)
@@ -348,19 +354,23 @@ class SubtitleSessionService : Service() {
 
             yield()
             currentCoroutineContext().ensureActive()
-            // Rotate keys: try first available via round-robin start index
-            val key = app.apiKeyStore.nextRotatedKey()
+            // Select credentials for the chosen provider.
+            val key = if (currentSettings.translationProvider == TranslationProvider.GROQ) {
+                app.apiKeyStore.getGroqApiKey()
+            } else app.apiKeyStore.nextRotatedKey()
             if (key.isBlank()) {
                 SessionBus.setStatus(SessionBus.Status.Error, AppStrings.get(R.string.msg_need_api_key))
                 stopEverything(AppStrings.get(R.string.msg_need_api_key), error = true)
                 return
             }
+            if (currentSettings.translationProvider == TranslationProvider.GROQ) {
+                startFlashAudioCapture(key)
+                SessionBus.setStatus(SessionBus.Status.Running, "Groq กำลังแปลเสียงเป็นภาษาไทย")
+                return
+            }
             if (currentSettings.geminiFlashTestMode) {
                 startFlashAudioCapture(key)
-                SessionBus.setStatus(
-                    SessionBus.Status.Running,
-                    getString(R.string.gemini_flash_test_running),
-                )
+                SessionBus.setStatus(SessionBus.Status.Running, getString(R.string.gemini_flash_test_running))
                 return
             }
             client.connect(
@@ -390,11 +400,19 @@ class SubtitleSessionService : Service() {
                 translationMutex.withLock {
                     if (!stopping) {
                         try {
-                            val translated = flashTranslationClient.translateAudioToThai(
-                                pcm16kMono = pcm,
-                                systemInstructions = currentSettings.geminiFlashSystemInstructions,
-                                apiKey = apiKey,
-                            )
+                            val translated = if (currentSettings.translationProvider == TranslationProvider.GROQ) {
+                                groqTranslationClient.translatePcmToThai(
+                                    pcm16kMono = pcm,
+                                    apiKey = apiKey,
+                                    sourceLanguage = if (currentSettings.geminiFlashSourceLanguage == UserSettings.Defaults.GEMINI_FLASH_SOURCE_LANGUAGE_CHINESE) "zh" else "ja",
+                                )
+                            } else {
+                                flashTranslationClient.translateAudioToThai(
+                                    pcm16kMono = pcm,
+                                    systemInstructions = currentSettings.geminiFlashSystemInstructions,
+                                    apiKey = apiKey,
+                                )
+                            }
                             if (!stopping) {
                                 appendTranscript(accumulatedOutput, translated)
                                 appendFull(fullOutput, translated)
@@ -403,7 +421,7 @@ class SubtitleSessionService : Service() {
                         } catch (e: CancellationException) {
                             throw e
                         } catch (t: Throwable) {
-                            Log.e(TAG, "Gemini Flash audio translation failed", t)
+                            Log.e(TAG, "Audio translation failed", t)
                             val message = getString(R.string.gemini_flash_translation_failed, t.message.orEmpty())
                             stopEverything(message, error = true)
                             break
