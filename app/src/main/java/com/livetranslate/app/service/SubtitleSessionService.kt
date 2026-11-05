@@ -414,6 +414,8 @@ class SubtitleSessionService : Service() {
                         customPrompt = currentSettings.customPrompt,
                     ),
                 )
+            } catch (e: CancellationException) {
+                throw e
             } catch (t: Throwable) {
                 Log.w(TAG, "Cloud connection could not start; switching to offline", t)
                 switchToOffline("เชื่อมต่อระบบออนไลน์ไม่สำเร็จ")
@@ -825,6 +827,8 @@ class SubtitleSessionService : Service() {
                         customPrompt = currentSettings.customPrompt,
                     ),
                 )
+            } catch (e: CancellationException) {
+                throw e
             } catch (t: Throwable) {
                 Log.w(TAG, "Cloud reconnect failed; switching to offline", t)
                 switchToOffline("เชื่อมต่อออนไลน์ซ้ำไม่สำเร็จ กำลังเปลี่ยนเป็นออฟไลน์")
