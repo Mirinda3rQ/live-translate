@@ -23,7 +23,7 @@ class OfflineWhisperClient(context: Context) {
     suspend fun prepareModel() = withContext(Dispatchers.IO) {
         if (modelFile.exists() && modelFile.length() > MIN_MODEL_BYTES) return@withContext
         modelFile.parentFile?.mkdirs()
-        val partial = File(modelFile.parentFile, "\${MODEL_NAME}.download")
+        val partial = File(modelFile.parentFile, "${MODEL_NAME}.download")
         val connection = (URL(MODEL_URL).openConnection() as HttpURLConnection).apply {
             connectTimeout = 20_000
             readTimeout = 60_000
@@ -33,7 +33,7 @@ class OfflineWhisperClient(context: Context) {
         try {
             connection.connect()
             check(connection.responseCode in 200..299) {
-                "ดาวน์โหลดโมเดลเสียงไม่สำเร็จ (\${connection.responseCode})"
+                "ดาวน์โหลดโมเดลเสียงไม่สำเร็จ (${connection.responseCode})"
             }
             connection.inputStream.use { input ->
                 partial.outputStream().buffered().use { output ->
@@ -66,7 +66,7 @@ class OfflineWhisperClient(context: Context) {
     suspend fun transcribe(pcm16kMono: ByteArray): String = withContext(Dispatchers.IO) {
         require(pcm16kMono.size >= MIN_AUDIO_BYTES) { "เสียงสั้นเกินไป" }
         val model = loadedModel ?: error("Whisper model is not loaded")
-        val wav = File(appContext.cacheDir, "offline-audio-\${System.nanoTime()}.wav")
+        val wav = File(appContext.cacheDir, "offline-audio-${System.nanoTime()}.wav")
         try {
             writePcmWav(wav, pcm16kMono)
             Whisper.transcribe(model, wav.absolutePath, WhisperConfig()).text.trim()
