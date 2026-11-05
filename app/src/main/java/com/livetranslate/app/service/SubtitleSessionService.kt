@@ -54,6 +54,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.yield
@@ -429,7 +430,7 @@ class SubtitleSessionService : Service() {
      * (automatic source-language detection) -> cached ML Kit source-to-Thai model.
      */
     private fun startOfflineAudioCapture() {
-        val queue = Channel<ByteArray>(Channel.UNLIMITED)
+        val queue = Channel<ByteArray>(capacity = 2, onBufferOverflow = BufferOverflow.DROP_OLDEST)
         offlineAudioQueue = queue
         synchronized(offlineAudioBufferLock) { offlineAudioBuffer = ByteArrayOutputStream() }
         val whisper = offlineWhisperClient ?: OfflineWhisperClient(this).also { offlineWhisperClient = it }
