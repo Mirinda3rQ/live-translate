@@ -6,6 +6,7 @@ import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.TranslatorOptions
 import com.google.mlkit.nl.translate.TranslateLanguage
+import com.google.mlkit.nl.translate.Translator
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -20,6 +21,8 @@ import kotlin.coroutines.resumeWithException
  */
 class OfflineTranslationClient(context: Context) {
     private val languageIdentifier = LanguageIdentification.getClient()
+    private val translatorLock = Any()
+    private val translators = mutableMapOf<String, Translator>()
 
     suspend fun detectLanguage(text: String): String? {
         if (text.isBlank()) return null
@@ -39,17 +42,8 @@ class OfflineTranslationClient(context: Context) {
     suspend fun prepareLanguageModel(sourceLanguageTag: String) {
         val source = TranslateLanguage.fromLanguageTag(sourceLanguageTag) ?: return
         if (source == TranslateLanguage.THAI) return
-        val translator = Translation.getClient(
-            TranslatorOptions.Builder()
-                .setSourceLanguage(source)
-                .setTargetLanguage(TranslateLanguage.THAI)
-                .build(),
-        )
-        try {
-            awaitTask(translator.downloadModelIfNeeded(DownloadConditions.Builder().build()))
-        } finally {
-            translator.close()
-        }
+        val translator = translatorFor(sourceLanguageTag, source)
+        awaitTask(translator.downloadModelIfNeeded(DownloadConditions.Builder().build()))
     }
 
     /**
@@ -64,22 +58,36 @@ class OfflineTranslationClient(context: Context) {
             ?: throw IllegalArgumentException("ยังไม่รองรับภาษาต้นฉบับ: $detected")
         require(source != TranslateLanguage.THAI) { "ข้อความเป็นภาษาไทยอยู่แล้ว" }
 
-        val options = TranslatorOptions.Builder()
-            .setSourceLanguage(source)
-            .setTargetLanguage(TranslateLanguage.THAI)
-            .build()
-        val translator = Translation.getClient(options)
-        try {
-            awaitTask(translator.downloadModelIfNeeded(DownloadConditions.Builder().build()))
-            return awaitTask(translator.translate(text))
-        } finally {
-            translator.close()
-        }
+        val translator = translatorFor(detected, source)
+        awaitTask(translator.downloadModelIfNeeded(DownloadConditions.Builder().build()))
+        return awaitTask(translator.translate(text))
     }
 
     fun close() {
         languageIdentifier.close()
+        synchronized(translatorLock) {
+            translators.values.forEach { it.close() }
+            translators.clear()
+        }
     }
+
+    /**
+     * Reuse one ML Kit translator per detected source language for the whole
+     * subtitle session. Recreating it for every four-second audio chunk adds
+     * avoidable setup/model checks to the critical path and increases subtitle
+     * lag. Translation options and source-to-Thai behavior remain unchanged.
+     */
+    private fun translatorFor(languageTag: String, source: String): Translator =
+        synchronized(translatorLock) {
+            translators.getOrPut(languageTag) {
+                Translation.getClient(
+                    TranslatorOptions.Builder()
+                        .setSourceLanguage(source)
+                        .setTargetLanguage(TranslateLanguage.THAI)
+                        .build(),
+                )
+            }
+        }
 
     private suspend fun <T> awaitTask(task: com.google.android.gms.tasks.Task<T>): T =
         suspendCancellableCoroutine { continuation ->
