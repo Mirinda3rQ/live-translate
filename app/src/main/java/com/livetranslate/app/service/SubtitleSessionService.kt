@@ -87,6 +87,8 @@ class SubtitleSessionService : Service() {
     private val groqTranslationClient = GroqTranslationClient()
     private var recognitionIntent: Intent? = null
     private var recognitionRestartPending = false
+    /** True while restartTranslationInPlace() is rebuilding the pipeline; suppresses auto-reconnect/stop races. */
+    private var restartInProgress = false
 
     private var currentSettings: UserSettings = UserSettings()
     private var audioSourceMode: AudioSourceMode = AudioSourceMode.MEDIA
@@ -265,7 +267,8 @@ class SubtitleSessionService : Service() {
                     runCatching { startActivity(settingsIntent) }
                         .onFailure { Log.e(TAG, "Could not open app settings from overlay", it) }
                 },
-                onRestartRequested = { restartAppFromOverlay() },
+                onRestartRequested = { restartTranslationInPlace() },
+                onRestartAppRequested = { restartAppFromOverlay() },
             )
             overlay = overlayController
             overlayController.show(currentSettings)
@@ -284,6 +287,7 @@ class SubtitleSessionService : Service() {
                         when (state) {
                             is LiveTranslateClient.ConnectionState.Ready -> {
                                 reconnectAttempts = 0
+                                restartInProgress = false
                                 SessionBus.setStatus(SessionBus.Status.Running, AppStrings.get(R.string.status_translating))
                                 startCapturePipeline(client)
                             }
@@ -310,6 +314,7 @@ class SubtitleSessionService : Service() {
                     when (event) {
                         is LiveTranslateClient.LiveEvent.SetupComplete -> {
                             reconnectAttempts = 0
+                            restartInProgress = false
                             SessionBus.setStatus(SessionBus.Status.Running, AppStrings.get(R.string.status_translating))
                             startCapturePipeline(client)
                         }
@@ -637,7 +642,7 @@ class SubtitleSessionService : Service() {
      * resumable and retries remain, reconnect transparently; otherwise stop.
      */
     private fun handleConnectionLoss(message: String) {
-        if (stopping) return
+        if (stopping || restartInProgress) return
         val client = liveClient
         if (client == null || client.lastResumptionHandle == null ||
             reconnectAttempts >= MAX_RECONNECTS
@@ -654,7 +659,7 @@ class SubtitleSessionService : Service() {
      * special buffering is needed for a short reconnect window.
      */
     private fun scheduleReconnect(reason: String) {
-        if (stopping) return
+        if (stopping || restartInProgress) return
         // Failed state and Error event can both report the same loss —
         // dedupe while a reconnect is already scheduled.
         if (reconnectJob?.isActive == true) return
@@ -901,6 +906,87 @@ class SubtitleSessionService : Service() {
     }
 
     /**
+     * Restart translation without ending the session. Keeps the MediaProjection
+     * grant, the overlay and the foreground notification; drops queued audio and
+     * in-flight requests, clears the on-screen captions (the full transcript is
+     * kept for export) and starts capture + translation again.
+     *
+     * If the platform refuses to re-open capture on the existing grant, the
+     * normal error path ends the session; long-press ↻ then does a full relaunch.
+     */
+    private fun restartTranslationInPlace() {
+        if (stopping || restartInProgress) return
+        restartInProgress = true
+        SessionBus.setStatus(SessionBus.Status.Starting, AppStrings.get(R.string.status_restarting))
+
+        // 1) Stop feeding audio, cancel queued / in-flight Groq or Flash requests.
+        mediaCapturer?.stop(); mediaCapturer = null
+        micCapturer?.stop(); micCapturer = null
+        pcmMixer?.close(); pcmMixer = null
+        releaseJapaneseSpeechRecognition() // also closes flashAudioQueue and cancels flashTranslationJob
+        synchronized(flashAudioBufferLock) { flashAudioBuffer = ByteArrayOutputStream() }
+        reconnectJob?.cancel(); reconnectJob = null
+        reconnectAttempts = 0
+        captureStarted = false
+
+        // 2) Clear what is on screen (fullInput/fullOutput stay for the export).
+        previewFlushJob?.cancel(); previewFlushJob = null
+        pendingPreviewInput = null
+        pendingPreviewOutput = null
+        accumulatedInput.clear()
+        accumulatedOutput.clear()
+        sameLanguageMode.reset()
+        overlay?.setSameLanguageMode(false)
+        publishCaptionUpdate(inputChanged = true, outputChanged = true)
+
+        // 3) Rebuild the pipeline after a short pause so AudioRecord is released.
+        val app = application as LiveTranslateApp
+        scope.launch {
+            delay(300L)
+            if (stopping) return@launch
+            val groq = currentSettings.translationProvider == TranslationProvider.GROQ
+            val key = if (groq) app.apiKeyStore.getGroqApiKey() else app.apiKeyStore.nextRotatedKey()
+            if (key.isBlank()) {
+                stopEverything(AppStrings.get(R.string.msg_need_api_key), error = true)
+                return@launch
+            }
+            if (groq || currentSettings.geminiFlashTestMode) {
+                startFlashAudioCapture(key)
+                if (!stopping) {
+                    SessionBus.setStatus(
+                        SessionBus.Status.Running,
+                        if (groq) "Groq กำลังแปลเสียงเป็นภาษาไทย" else getString(R.string.gemini_flash_test_running),
+                    )
+                }
+                restartInProgress = false
+            } else {
+                // Gemini Live: open a fresh connection (no resumption handle). The
+                // Ready / SetupComplete handlers restart capture and clear the flag.
+                val live = liveClient
+                if (live == null) {
+                    stopEverything(AppStrings.get(R.string.error_disconnected), error = true)
+                    return@launch
+                }
+                live.connect(
+                    LiveTranslateClient.SessionConfig(
+                        endpoint = currentSettings.endpoint,
+                        apiKey = key,
+                        modelId = currentSettings.modelId,
+                        targetLanguageCode = SupportedLanguages.canonicalOrDefault(
+                            currentSettings.targetLanguageCode,
+                        ),
+                        echoTargetLanguage = true,
+                        customPrompt = currentSettings.customPrompt,
+                    ),
+                )
+                // Safety net: never leave auto-reconnect suppressed if setup never completes.
+                delay(10_000L)
+                restartInProgress = false
+            }
+        }
+    }
+
+    /**
      * Relaunch the main app after ending the active media-capture session.
      * The overlay is a user-tapped surface, so this action is initiated directly
      * from an explicit user interaction rather than a background timer.
@@ -923,6 +1009,7 @@ class SubtitleSessionService : Service() {
     private fun stopEverything(message: String, error: Boolean = false) {
         if (stopping) return
         stopping = true
+        restartInProgress = false
         releaseJapaneseSpeechRecognition()
         sessionJob?.cancel()
         sessionJob = null
