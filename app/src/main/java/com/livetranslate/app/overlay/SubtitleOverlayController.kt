@@ -60,7 +60,10 @@ class SubtitleOverlayController(
     private val onSettingsChanged: ((UserSettings) -> UserSettings) -> Unit = {},
     private val onCloseRequested: () -> Unit = {},
     private val onSettingsRequested: () -> Unit = {},
+    /** Tap on ↻: restart translation only (keeps the capture grant and overlay). */
     private val onRestartRequested: () -> Unit = {},
+    /** Long-press on ↻: full app relaunch (asks for a fresh screen-capture grant). */
+    private val onRestartAppRequested: () -> Unit = {},
 ) {
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private var rootView: View? = null
@@ -572,10 +575,15 @@ class SubtitleOverlayController(
             textSize = 18f
             setTextColor(Color.argb(220, 255, 255, 255))
             gravity = Gravity.CENTER
-            contentDescription = "Restart app"
+            contentDescription = "Restart translation (long-press: restart app)"
             setOnClickListener {
                 suppressNextToggle = true
                 onRestartRequested()
+            }
+            setOnLongClickListener {
+                suppressNextToggle = true
+                onRestartAppRequested()
+                true
             }
         }
         grabberRow.addView(restart)
