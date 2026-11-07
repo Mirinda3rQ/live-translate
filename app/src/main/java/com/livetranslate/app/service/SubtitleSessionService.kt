@@ -32,6 +32,7 @@ import com.livetranslate.app.data.TranslationProvider
 import com.livetranslate.app.live.LiveTranslateClient
 import com.livetranslate.app.live.GeminiFlashTranslationClient
 import com.livetranslate.app.live.GroqRateLimitException
+import com.livetranslate.app.live.GroqRefusalException
 import com.livetranslate.app.live.GroqTranslationClient
 import java.io.ByteArrayOutputStream
 import com.livetranslate.app.overlay.SubtitleOverlayController
@@ -467,6 +468,11 @@ class SubtitleSessionService : Service() {
                                                 )
                                             }
                                         }
+                                    } catch (e: GroqRefusalException) {
+                                        // Groq refused this chunk: never show the refusal text.
+                                        // Retry just this chunk on Gemini (BLOCK_NONE); otherwise skip it.
+                                        Log.w(TAG, "Groq refused chunk; " + if (geminiKey.isNotBlank()) "using Gemini Flash" else "skipping")
+                                        if (geminiKey.isBlank()) "" else translateWithGemini()
                                     } catch (e: GroqRateLimitException) {
                                         if (geminiKey.isBlank()) throw e
                                         groqCooldownUntilMs = nowMs + e.retryAfterMs
