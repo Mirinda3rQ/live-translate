@@ -10,6 +10,7 @@ import com.livetranslate.app.data.SupportedLanguages
 import com.livetranslate.app.data.UserSettings
 import com.livetranslate.app.data.UserSettingsRepository
 import com.livetranslate.app.live.LiveTranslateClient
+import com.livetranslate.app.live.GroqTranslationClient
 import com.livetranslate.app.util.AppStrings
 import com.livetranslate.app.R
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,6 +32,29 @@ class SettingsViewModel(
         initialKeys.map { TextFieldValue(it, TextRange(it.length)) },
     )
     val apiKeyFields: StateFlow<List<TextFieldValue>> = _apiKeyFields.asStateFlow()
+
+    private val _groqApiKey = MutableStateFlow(apiKeyStore.getGroqApiKey())
+    val groqApiKey: StateFlow<String> = _groqApiKey.asStateFlow()
+
+    fun updateGroqApiKey(value: String) { _groqApiKey.value = value }
+
+    fun saveGroqApiKey() { apiKeyStore.setGroqApiKey(_groqApiKey.value) }
+
+    private val _groqChatModel = MutableStateFlow(apiKeyStore.getGroqChatModel())
+    val groqChatModel: StateFlow<String> = _groqChatModel.asStateFlow()
+    private val _groqSpeechModel = MutableStateFlow(apiKeyStore.getGroqSpeechModel())
+    val groqSpeechModel: StateFlow<String> = _groqSpeechModel.asStateFlow()
+
+    fun selectGroqChatModel(model: String) {
+        _groqChatModel.value = model
+        apiKeyStore.setGroqChatModel(model)
+        clearTestResult()
+    }
+    fun selectGroqSpeechModel(model: String) {
+        _groqSpeechModel.value = model
+        apiKeyStore.setGroqSpeechModel(model)
+        clearTestResult()
+    }
 
     private val _testResult = MutableStateFlow<String?>(null)
     val testResult: StateFlow<String?> = _testResult.asStateFlow()
@@ -69,12 +93,25 @@ class SettingsViewModel(
         _testResult.value = "✅"
     }
 
+    fun clearTestResult() { _testResult.value = null }
+
     fun update(transform: (UserSettings) -> UserSettings) {
         viewModelScope.launch { settingsRepository.update(transform) }
     }
 
     fun resetSubtitleAppearance() {
         viewModelScope.launch { settingsRepository.resetSubtitleAppearance() }
+    }
+
+    fun testGroqConnection() {
+        viewModelScope.launch {
+            _testing.value = true
+            saveGroqApiKey()
+            _testResult.value = "กำลังทดสอบ Groq..."
+            val result = GroqTranslationClient().testConnection(_groqApiKey.value, _groqChatModel.value)
+            _testResult.value = result.fold({ "✅ $it" }, { "❌ ${it.message}" })
+            _testing.value = false
+        }
     }
 
     fun testConnection() {

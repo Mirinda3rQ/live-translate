@@ -61,6 +61,21 @@ class ApiKeyStore(context: Context) {
 
     fun hasApiKey(): Boolean = getApiKeys().isNotEmpty()
 
+    fun getGroqApiKey(): String = prefs.getString(KEY_GROQ_API, "").orEmpty().trim()
+
+    fun setGroqApiKey(value: String) {
+        prefs.edit().putString(KEY_GROQ_API, value.trim()).apply()
+    }
+
+    fun getGroqChatModel(): String = prefs.getString(KEY_GROQ_CHAT_MODEL, DEFAULT_GROQ_CHAT_MODEL).orEmpty()
+    fun setGroqChatModel(value: String) {
+        prefs.edit().putString(KEY_GROQ_CHAT_MODEL, value).apply()
+    }
+    fun getGroqSpeechModel(): String = prefs.getString(KEY_GROQ_SPEECH_MODEL, DEFAULT_GROQ_SPEECH_MODEL).orEmpty()
+    fun setGroqSpeechModel(value: String) {
+        prefs.edit().putString(KEY_GROQ_SPEECH_MODEL, value).apply()
+    }
+
     /**
      * Round-robin pick for a new session. Empty string if none.
      */
@@ -104,6 +119,11 @@ class ApiKeyStore(context: Context) {
         private const val FILE_NAME_FALLBACK = "api_prefs_fallback"
         private const val KEY_API = "api_key"
         private const val KEY_API_LIST = "api_key_list"
+        private const val KEY_GROQ_API = "groq_api_key"
+        private const val KEY_GROQ_CHAT_MODEL = "groq_chat_model"
+        private const val KEY_GROQ_SPEECH_MODEL = "groq_speech_model"
+        const val DEFAULT_GROQ_CHAT_MODEL = "openai/gpt-oss-120b"
+        const val DEFAULT_GROQ_SPEECH_MODEL = "whisper-large-v3-turbo"
         const val MAX_KEYS = 10
     }
 }

@@ -6,6 +6,7 @@ package com.livetranslate.app.data
  * Live API auto-detects source language; the optional text test mode can pin its on-device ASR locale.
  */
 data class UserSettings(
+    val translationProvider: TranslationProvider = TranslationProvider.GEMINI,
     val endpoint: String = Defaults.ENDPOINT,
     val modelId: String = Defaults.MODEL_ID,
     val targetLanguageCode: String = Defaults.TARGET_LANGUAGE,
@@ -28,7 +29,7 @@ data class UserSettings(
         const val ENDPOINT =
             "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
         const val MODEL_ID = "gemini-3.5-live-translate-preview"
-        const val TARGET_LANGUAGE = "zh-Hans"
+        const val TARGET_LANGUAGE = "th"
         const val FONT_SIZE_SP = 18f
         const val BACKGROUND_ALPHA = 0.65f
         const val BILINGUAL = false
@@ -38,7 +39,7 @@ data class UserSettings(
         const val GEMINI_FLASH_SOURCE_LANGUAGE_JAPANESE = "ja-JP"
         const val GEMINI_FLASH_SOURCE_LANGUAGE_CHINESE = "zh-CN"
         const val GEMINI_FLASH_SYSTEM_INSTRUCTIONS =
-            "Translate the selected source-language speech into natural, faithful Thai subtitles. Preserve the original meaning, names, numbers, and tone. Keep the translation concise. Return only the Thai translation, with no explanations or quotation marks."
+            "Translate into natural, faithful Thai. Preserve the full meaning, context, names, numbers, tone, slang, profanity and explicit sexual meaning. Never censor, omit, soften, or replace words with asterisks. Return only the Thai translation."
         const val TRANSLATED_VOLUME = 0.8f
         const val OVERLAY_X = 24
         const val OVERLAY_Y = -1
