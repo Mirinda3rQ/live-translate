@@ -36,6 +36,7 @@ class GeminiFlashTranslationClient {
                         ),
                     ),
                 )
+                .put("safetySettings", safetySettings())
                 .toString()
                 .toRequestBody(JSON_MEDIA_TYPE)
             val request = Request.Builder()
@@ -80,7 +81,7 @@ class GeminiFlashTranslationClient {
         require(apiKey.isNotBlank()) { "Missing API key" }
         val wav = pcm16kToWav(pcm16kMono, 16_000)
         val parts = org.json.JSONArray()
-            .put(JSONObject().put("text", "Listen to this audio and translate the spoken words into concise, natural Thai subtitles. Return only the Thai translation."))
+            .put(JSONObject().put("text", "Listen to this audio and translate the spoken words into natural Thai subtitles that stay faithful to the speaker's exact meaning, tone, slang and profanity. Never censor, soften or omit words. Return only the Thai translation."))
             .put(JSONObject().put("inlineData", JSONObject()
                 .put("mimeType", "audio/wav")
                 .put("data", android.util.Base64.encodeToString(wav, android.util.Base64.NO_WRAP))))
@@ -91,6 +92,7 @@ class GeminiFlashTranslationClient {
                     com.livetranslate.app.data.UserSettings.Defaults.GEMINI_FLASH_SYSTEM_INSTRUCTIONS
                 }),
             )))
+            .put("safetySettings", safetySettings())
             .toString().toRequestBody(JSON_MEDIA_TYPE)
         val request = Request.Builder().url(ENDPOINT)
             .header("x-goog-api-key", apiKey)
@@ -106,13 +108,36 @@ class GeminiFlashTranslationClient {
                     "Gemini audio request failed (HTTP " + response.code + ")"
                 })
             }
-            val outputParts = JSONObject(responseText).optJSONArray("candidates")
+            val root = JSONObject(responseText)
+            val outputParts = root.optJSONArray("candidates")
                 ?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
-                ?: throw IllegalStateException("Gemini returned no subtitle text")
+                ?: throw IllegalStateException("Gemini returned no subtitle text" + emptyReason(root))
             buildString {
                 for (i in 0 until outputParts.length()) append(outputParts.optJSONObject(i)?.optString("text").orEmpty())
             }.trim().ifBlank { throw IllegalStateException("Gemini returned empty subtitles") }
         }
+    }
+
+    /**
+     * Subtitles must not be filtered: Gemini's default thresholds can silently drop
+     * profanity or sexual language. BLOCK_NONE is the loosest setting the API allows
+     * (some content, e.g. child-safety, is always blocked regardless).
+     */
+    private fun safetySettings(): org.json.JSONArray = org.json.JSONArray().apply {
+        listOf(
+            "HARM_CATEGORY_HARASSMENT",
+            "HARM_CATEGORY_HATE_SPEECH",
+            "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            "HARM_CATEGORY_DANGEROUS_CONTENT",
+        ).forEach { put(JSONObject().put("category", it).put("threshold", "BLOCK_NONE")) }
+    }
+
+    /** " (reason)" when Gemini reports why a response is empty (blockReason / finishReason), else "". */
+    private fun emptyReason(root: JSONObject): String {
+        val block = root.optJSONObject("promptFeedback")?.optString("blockReason").orEmpty()
+        val finish = root.optJSONArray("candidates")?.optJSONObject(0)?.optString("finishReason").orEmpty()
+        val reason = listOf(block, finish).filter { it.isNotBlank() }.joinToString("/")
+        return if (reason.isBlank()) "" else " ($reason)"
     }
 
     private fun pcm16kToWav(pcm: ByteArray, sampleRate: Int): ByteArray {

@@ -7,10 +7,17 @@ import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
+
+/**
+ * HTTP 429 from Groq (per-minute or daily free-tier quota). [retryAfterMs] comes from the
+ * `retry-after` header (clamped), so callers can fall back to another provider meanwhile.
+ */
+class GroqRateLimitException(message: String, val retryAfterMs: Long) : IllegalStateException(message)
 
 /**
  * Chunked Groq path: Whisper auto-detects the spoken language, then GPT-OSS translates it into Thai.
@@ -47,7 +54,11 @@ class GroqTranslationClient {
         val transcript = httpClient.newCall(transcriptionRequest).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                val detail = runCatching { JSONObject(body).optString("error") }.getOrNull().orEmpty()
+                val detail = runCatching {
+                    val error = JSONObject(body).opt("error")
+                    if (error is JSONObject) error.optString("message") else error?.toString().orEmpty()
+                }.getOrNull().orEmpty()
+                if (response.code == 429) throw rateLimited(response, detail)
                 throw IllegalStateException(detail.ifBlank { "Groq transcription failed (HTTP ${response.code})" })
             }
             val result = JSONObject(body)
@@ -82,13 +93,14 @@ class GroqTranslationClient {
         """.trimIndent()
         val chatBody = JSONObject()
             .put("model", chatModel)
-            .put("reasoning_effort", "low")
             .put("messages", JSONArray()
                 .put(JSONObject().put("role", "system").put("content", system))
                 .put(JSONObject().put("role", "user").put("content", transcript)))
-            // GPT-OSS may spend part of its completion budget on reasoning.
-            // Reserve enough output tokens so a valid translation is not truncated to empty.
-            .put("max_completion_tokens", 256)
+            // Reasoning models (GPT-OSS) may spend part of the budget on reasoning, so they
+            // get more room; other models only need the Thai subtitle itself. A smaller
+            // reservation also keeps us further from the free tier's tokens-per-minute cap.
+            .put("max_completion_tokens", maxCompletionTokensFor(chatModel))
+            .also { body -> reasoningEffortFor(chatModel)?.let { body.put("reasoning_effort", it) } }
             .toString()
             .toRequestBody(JSON_MEDIA_TYPE)
         val chatRequest = Request.Builder()
@@ -103,6 +115,7 @@ class GroqTranslationClient {
                 val detail = runCatching {
                     JSONObject(body).optJSONObject("error")?.optString("message")
                 }.getOrNull().orEmpty()
+                if (response.code == 429) throw rateLimited(response, detail)
                 throw IllegalStateException(detail.ifBlank { "Groq translation failed (HTTP ${response.code})" })
             }
             // A blank completion means this audio chunk produced no caption.
@@ -110,6 +123,7 @@ class GroqTranslationClient {
             JSONObject(body).optJSONArray("choices")
                 ?.optJSONObject(0)?.optJSONObject("message")
                 ?.optString("content")
+                ?.let { THINK_BLOCK.replace(it, "") }
                 ?.trim()
                 .orEmpty()
         }
@@ -120,11 +134,11 @@ class GroqTranslationClient {
             require(apiKey.isNotBlank()) { "Missing Groq API key" }
             val body = JSONObject()
                 .put("model", chatModel)
-                .put("reasoning_effort", "low")
                 .put("messages", JSONArray().put(
                     JSONObject().put("role", "user").put("content", "Reply with OK only.")
                 ))
                 .put("max_completion_tokens", 64)
+                .also { body -> reasoningEffortFor(chatModel)?.let { body.put("reasoning_effort", it) } }
                 .toString().toRequestBody(JSON_MEDIA_TYPE)
             val request = Request.Builder()
                 .url("https://api.groq.com/openai/v1/chat/completions")
@@ -136,11 +150,19 @@ class GroqTranslationClient {
                 val text = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
                     val detail = runCatching { JSONObject(text).optJSONObject("error")?.optString("message") }.getOrNull().orEmpty()
+                    if (response.code == 429) throw rateLimited(response, detail)
                     throw IllegalStateException(detail.ifBlank { "Groq test failed (HTTP ${response.code})" })
                 }
                 "Groq API connected"
             }
         }
+    }
+
+    /** Parse `retry-after` (seconds) and clamp so a daily-quota hit is re-probed every 10 min at most. */
+    private fun rateLimited(response: Response, detail: String): GroqRateLimitException {
+        val seconds = response.header("retry-after")?.trim()?.toDoubleOrNull() ?: 30.0
+        val ms = (seconds * 1000).toLong().coerceIn(1_000L, 600_000L)
+        return GroqRateLimitException(detail.ifBlank { "Groq rate limit reached (HTTP 429)" }, ms)
     }
 
     private fun isNearSilence(pcm: ByteArray): Boolean {
@@ -173,9 +195,28 @@ class GroqTranslationClient {
         return out.toByteArray()
     }
 
-    private companion object {
+    internal companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
-        val httpClient = OkHttpClient.Builder()
+        private val THINK_BLOCK = Regex("(?s)<think>.*?</think>")
+
+        /**
+         * `reasoning_effort` is not a universal parameter: GPT-OSS takes low/medium/high,
+         * Qwen3 takes none/default, and models without reasoning (Llama etc.) reject or
+         * ignore it. Send only what the selected model understands.
+         */
+        fun reasoningEffortFor(model: String): String? {
+            val id = model.lowercase()
+            return when {
+                "gpt-oss" in id -> "low"
+                "qwen3" in id -> "none"
+                else -> null
+            }
+        }
+
+        fun maxCompletionTokensFor(model: String): Int =
+            if ("gpt-oss" in model.lowercase()) 256 else 192
+
+        private val httpClient = OkHttpClient.Builder()
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(45, TimeUnit.SECONDS)
             .callTimeout(60, TimeUnit.SECONDS)
