@@ -31,6 +31,7 @@ import com.livetranslate.app.data.UserSettings
 import com.livetranslate.app.data.TranslationProvider
 import com.livetranslate.app.live.LiveTranslateClient
 import com.livetranslate.app.live.GeminiFlashTranslationClient
+import com.livetranslate.app.live.GroqRateLimitException
 import com.livetranslate.app.live.GroqTranslationClient
 import java.io.ByteArrayOutputStream
 import com.livetranslate.app.overlay.SubtitleOverlayController
@@ -430,17 +431,54 @@ class SubtitleSessionService : Service() {
         synchronized(flashAudioBufferLock) { flashAudioBuffer = ByteArrayOutputStream() }
         flashTranslationJob = scope.launch {
             var consecutiveTranslationFailures = 0
+            // Groq free tier hit its quota: until this time, translate with Gemini Flash
+            // (only if the user saved a Gemini key). Elapsed-realtime so clock changes don't matter.
+            var groqCooldownUntilMs = 0L
+            var usingGeminiFallback = false
             for (pcm in queue) {
                 translationMutex.withLock {
                     if (!stopping) {
                         try {
                             val translated = if (currentSettings.translationProvider == TranslationProvider.GROQ) {
-                                groqTranslationClient.translatePcmToThai(
-                                    pcm16kMono = pcm,
-                                    apiKey = apiKey,
-                                    speechModel = app.apiKeyStore.getGroqSpeechModel(),
-                                    chatModel = app.apiKeyStore.getGroqChatModel(),
-                                )
+                                val geminiKey = app.apiKeyStore.nextRotatedKey()
+                                val nowMs = android.os.SystemClock.elapsedRealtime()
+                                val translateWithGemini = suspend {
+                                    flashTranslationClient.translateAudioToThai(
+                                        pcm16kMono = pcm,
+                                        systemInstructions = currentSettings.geminiFlashSystemInstructions,
+                                        apiKey = geminiKey,
+                                    )
+                                }
+                                if (geminiKey.isNotBlank() && nowMs < groqCooldownUntilMs) {
+                                    translateWithGemini()
+                                } else {
+                                    try {
+                                        groqTranslationClient.translatePcmToThai(
+                                            pcm16kMono = pcm,
+                                            apiKey = apiKey,
+                                            speechModel = app.apiKeyStore.getGroqSpeechModel(),
+                                            chatModel = app.apiKeyStore.getGroqChatModel(),
+                                        ).also {
+                                            if (usingGeminiFallback) {
+                                                usingGeminiFallback = false
+                                                SessionBus.setStatus(
+                                                    SessionBus.Status.Running,
+                                                    "Groq กำลังแปลเสียงเป็นภาษาไทย",
+                                                )
+                                            }
+                                        }
+                                    } catch (e: GroqRateLimitException) {
+                                        if (geminiKey.isBlank()) throw e
+                                        groqCooldownUntilMs = nowMs + e.retryAfterMs
+                                        usingGeminiFallback = true
+                                        Log.w(TAG, "Groq rate limited; using Gemini Flash for ${e.retryAfterMs} ms")
+                                        SessionBus.setStatus(
+                                            SessionBus.Status.Running,
+                                            "Groq เต็มโควตา ใช้ Gemini แปลแทนชั่วคราว",
+                                        )
+                                        translateWithGemini()
+                                    }
+                                }
                             } else {
                                 flashTranslationClient.translateAudioToThai(
                                     pcm16kMono = pcm,
