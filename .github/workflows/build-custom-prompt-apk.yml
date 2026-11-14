@@ -2,6 +2,9 @@ name: Build Custom Prompt APK
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feature/groq-provider-settings-redesign
 
 permissions:
   contents: read
