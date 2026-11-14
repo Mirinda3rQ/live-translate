@@ -10,11 +10,9 @@ plugins {
 android {
     namespace = "com.livetranslate.app"
     compileSdk {
-        version = release(37) {
-            minorApiLevel = 0
-        }
+        version = release(36)
     }
-    buildToolsVersion = "37.0.0"
+    buildToolsVersion = "36.0.0"
 
     defaultConfig {
         applicationId = "com.livetranslate.app"
