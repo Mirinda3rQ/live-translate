@@ -87,6 +87,8 @@ class SubtitleSessionService : Service() {
     private val translationMutex = Mutex()
     private val flashTranslationClient = GeminiFlashTranslationClient()
     private val groqTranslationClient = GroqTranslationClient()
+    /** Last few source-language lines, sent to Gemini as translation context (hybrid mode). */
+    private val recentTranscripts = ArrayDeque<String>()
     private var recognitionIntent: Intent? = null
     private var recognitionRestartPending = false
     /** True while restartTranslationInPlace() is rebuilding the pipeline; suppresses auto-reconnect/stop races. */
@@ -171,6 +173,7 @@ class SubtitleSessionService : Service() {
         reconnectAttempts = 0
         SessionBus.setStatus(SessionBus.Status.Starting, AppStrings.get(R.string.status_starting))
         SessionBus.clearExport()
+        recentTranscripts.clear()
         accumulatedInput.clear()
         accumulatedOutput.clear()
         fullInput.clear()
@@ -436,6 +439,7 @@ class SubtitleSessionService : Service() {
             // (only if the user saved a Gemini key). Elapsed-realtime so clock changes don't matter.
             var groqCooldownUntilMs = 0L
             var usingGeminiFallback = false
+            var hybridStatusShown = false
             for (pcm in queue) {
                 translationMutex.withLock {
                     if (!stopping) {
@@ -454,12 +458,31 @@ class SubtitleSessionService : Service() {
                                     translateWithGemini()
                                 } else {
                                     try {
-                                        groqTranslationClient.translatePcmToThai(
-                                            pcm16kMono = pcm,
-                                            apiKey = apiKey,
-                                            speechModel = app.apiKeyStore.getGroqSpeechModel(),
-                                            chatModel = app.apiKeyStore.getGroqChatModel(),
-                                        ).also {
+                                        val groqChatModel = app.apiKeyStore.getGroqChatModel()
+                                        val useHybrid = groqChatModel == GroqTranslationClient.HYBRID_GEMINI_MODEL &&
+                                            geminiKey.isNotBlank()
+                                        if (useHybrid && !hybridStatusShown) {
+                                            hybridStatusShown = true
+                                            SessionBus.setStatus(
+                                                SessionBus.Status.Running,
+                                                "Groq ถอดเสียง + Gemini แปลเป็นไทย",
+                                            )
+                                        }
+                                        (if (useHybrid) {
+                                            translateHybrid(
+                                                pcm = pcm,
+                                                groqKey = apiKey,
+                                                geminiKey = geminiKey,
+                                                speechModel = app.apiKeyStore.getGroqSpeechModel(),
+                                            )
+                                        } else {
+                                            groqTranslationClient.translatePcmToThai(
+                                                pcm16kMono = pcm,
+                                                apiKey = apiKey,
+                                                speechModel = app.apiKeyStore.getGroqSpeechModel(),
+                                                chatModel = groqChatModel,
+                                            )
+                                        }).also {
                                             if (usingGeminiFallback) {
                                                 usingGeminiFallback = false
                                                 SessionBus.setStatus(
@@ -557,6 +580,43 @@ class SubtitleSessionService : Service() {
             Log.e(TAG, "Flash audio capture failed", e)
             stopEverything(e.message ?: AppStrings.get(R.string.error_capture_start_failed), error = true)
         }
+    }
+
+    /**
+     * Hybrid Groq mode: Groq Whisper transcribes the chunk, Gemini translates the text into Thai
+     * using the last few source lines as context. If Gemini fails, Groq's default chat model
+     * translates the same transcript so the caption is not lost. Always called under
+     * [translationMutex], so [recentTranscripts] needs no extra locking.
+     */
+    private suspend fun translateHybrid(
+        pcm: ByteArray,
+        groqKey: String,
+        geminiKey: String,
+        speechModel: String,
+    ): String {
+        val transcript = groqTranslationClient.transcribePcm(pcm, groqKey, speechModel)
+        if (transcript.isBlank()) return ""
+        val context = recentTranscripts.toList()
+        val translated = try {
+            flashTranslationClient.translateTranscriptToThai(transcript, context, geminiKey)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Gemini text translation failed; falling back to Groq chat: ${e.message}")
+            groqTranslationClient.translateTranscriptToThai(
+                transcript = transcript,
+                apiKey = groqKey,
+                chatModel = GroqTranslationClient.DEFAULT_CHAT_MODEL,
+                previousLines = context,
+            )
+        }
+        recentTranscripts.addLast(transcript)
+        while (recentTranscripts.size > HYBRID_CONTEXT_LINES) recentTranscripts.removeFirst()
+        // Show the source line too (visible when bilingual captions are on).
+        appendTranscript(accumulatedInput, transcript)
+        appendFull(fullInput, transcript)
+        publishCaptionUpdate(inputChanged = true, outputChanged = false)
+        return translated
     }
 
     private fun startJapaneseSpeechRecognition(apiKey: String) {
@@ -977,6 +1037,7 @@ class SubtitleSessionService : Service() {
         previewFlushJob?.cancel(); previewFlushJob = null
         pendingPreviewInput = null
         pendingPreviewOutput = null
+        recentTranscripts.clear()
         accumulatedInput.clear()
         accumulatedOutput.clear()
         sameLanguageMode.reset()
@@ -1125,6 +1186,7 @@ class SubtitleSessionService : Service() {
         private const val MAX_RECONNECTS = 6
         private const val RECONNECT_BASE_DELAY_MS = 1_500L
         private const val RECOGNITION_RESTART_DELAY_MS = 350L
+        private const val HYBRID_CONTEXT_LINES = 3
         private const val FLASH_AUDIO_CHUNK_BYTES = 96_000 // 3 seconds at 16 kHz, mono, 16-bit PCM
         private const val JAPANESE_LOCALE = "ja-JP"
         private const val CHINESE_LOCALE = "zh-CN"
