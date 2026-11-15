@@ -471,6 +471,7 @@ class SubtitleSessionService : Service() {
                                         val groqKeys = app.apiKeyStore.nextGroqApiKeys().ifEmpty { listOf(apiKey) }
                                         var groqResult: String? = null
                                         var lastRateLimit: GroqRateLimitException? = null
+                                        var lastCredentialError: GroqCredentialException? = null
                                         for ((keyIndex, groqKey) in groqKeys.withIndex()) {
                                             try {
                                                 groqResult = if (useHybrid) {
@@ -495,9 +496,16 @@ class SubtitleSessionService : Service() {
                                                 lastRateLimit = e
                                                 Log.w(TAG, "Groq key ${keyIndex + 1}/${groqKeys.size} rate limited")
                                                 if (keyIndex == groqKeys.lastIndex) throw e
+                                            } catch (e: GroqCredentialException) {
+                                                lastCredentialError = e
+                                                Log.w(TAG, "Groq key ${keyIndex + 1}/${groqKeys.size} rejected")
+                                                if (keyIndex == groqKeys.lastIndex) throw e
                                             }
                                         }
-                                        (groqResult ?: lastRateLimit?.let { throw it } ?: "").also {
+                                        (groqResult
+                                            ?: lastRateLimit?.let { throw it }
+                                            ?: lastCredentialError?.let { throw it }
+                                            ?: "").also {
                                             if (usingGeminiFallback) {
                                                 usingGeminiFallback = false
                                                 SessionBus.setStatus(
@@ -511,6 +519,16 @@ class SubtitleSessionService : Service() {
                                         // Retry just this chunk on Gemini (BLOCK_NONE); otherwise skip it.
                                         Log.w(TAG, "Groq refused chunk; " + if (geminiKey.isNotBlank()) "using Gemini Flash" else "skipping")
                                         if (geminiKey.isBlank()) "" else translateWithGemini()
+                                    } catch (e: GroqCredentialException) {
+                                        if (geminiKey.isBlank()) throw e
+                                        groqCooldownUntilMs = nowMs + 600_000L
+                                        usingGeminiFallback = true
+                                        Log.w(TAG, "All configured Groq keys were rejected; using Gemini Flash")
+                                        SessionBus.setStatus(
+                                            SessionBus.Status.Running,
+                                            "Groq API Key ใช้งานไม่ได้ ใช้ Gemini สำรองชั่วคราว",
+                                        )
+                                        translateWithGemini()
                                     } catch (e: GroqRateLimitException) {
                                         if (geminiKey.isBlank()) throw e
                                         groqCooldownUntilMs = nowMs + e.retryAfterMs
