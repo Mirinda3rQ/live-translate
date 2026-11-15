@@ -22,6 +22,8 @@ class GroqRateLimitException(message: String, val retryAfterMs: Long) : IllegalS
 /** Invalid/revoked credentials should be skipped in favor of the next configured key. */
 class GroqCredentialException(message: String) : IllegalStateException(message)
 
+/** Temporary provider/network failures should fall back for this chunk, then retry Groq later. */
+class GroqTransientException(message: String) : java.io.IOException(message)
 /**
  * The Groq chat model refused to translate a chunk (content-policy style reply such as
  * "I'm sorry, but I can't help with that"). Never show that text as a subtitle; callers may
@@ -72,6 +74,7 @@ class GroqTranslationClient {
                 if (response.code == 401 || response.code == 403) {
                     throw GroqCredentialException(detail.ifBlank { "Groq API key rejected (HTTP ${response.code})" })
                 }
+                if (response.code >= 500) throw GroqTransientException(detail.ifBlank { "Groq transcription server error (HTTP ${response.code})" })
                 throw IllegalStateException(detail.ifBlank { "Groq transcription failed (HTTP ${response.code})" })
             }
             val result = JSONObject(body)
@@ -147,6 +150,7 @@ class GroqTranslationClient {
                 if (response.code == 401 || response.code == 403) {
                     throw GroqCredentialException(detail.ifBlank { "Groq API key rejected (HTTP ${response.code})" })
                 }
+                if (response.code >= 500) throw GroqTransientException(detail.ifBlank { "Groq translation server error (HTTP ${response.code})" })
                 throw IllegalStateException(detail.ifBlank { "Groq translation failed (HTTP ${response.code})" })
             }
             // A blank completion means this audio chunk produced no caption.
