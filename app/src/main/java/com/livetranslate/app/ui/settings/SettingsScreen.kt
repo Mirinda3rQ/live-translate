@@ -291,6 +291,7 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(4.dp))
                     GroupLabel("แปลภาษา (Text LLM)")
                     listOf(
+                        Triple("gemini-hybrid", "Gemini แปลจากข้อความ (แนะนำ)", "ภาษาไทยลื่นสุด ใช้ประโยคก่อนหน้าเป็นบริบท ต้องมี Gemini key"),
                         Triple("openai/gpt-oss-120b", "GPT-OSS 120B", "คุณภาพและเข้าใจบริบทดี"),
                         Triple("openai/gpt-oss-20b", "GPT-OSS 20B", "เร็วกว่า"),
                         Triple("qwen/qwen3.8-27b", "Qwen 3.8 27B", "ตัวเลือกเพิ่มเติม"),
