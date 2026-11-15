@@ -484,8 +484,6 @@ class LiveTranslateClient {
      */
     private fun buildSetupMessage(config: SessionConfig): String {
         val model = config.modelId.trim().removePrefix("models/")
-        val target = config.targetLanguageCode.trim().ifBlank { "zh-Hans" }
-
         val prompt = config.customPrompt.trim().ifBlank {
             com.livetranslate.app.data.UserSettings.Defaults.DEFAULT_SYSTEM_PROMPT
         }
