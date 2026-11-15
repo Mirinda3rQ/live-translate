@@ -82,7 +82,6 @@ class SubtitleOverlayController(
     private var grabberRow: FrameLayout? = null
     private var closeButton: View? = null
     private var settingsButton: View? = null
-    private var captionsToggleButton: TextView? = null
     private var tuneButton: TextView? = null
     private var voiceGroup: LinearLayout? = null
     private var settingsPanel: LinearLayout? = null
@@ -93,7 +92,6 @@ class SubtitleOverlayController(
     private var voiceToggle: Switch? = null
     private var syncingPanelControls = false
     private var settingsPanelOpen = false
-    private var captionsVisible = true
     private var heightBeforeSettingsPx = 0
     private var yBeforeSettingsPx = 0
     private var xAtSettingsOpenPx = 0
@@ -262,7 +260,6 @@ class SubtitleOverlayController(
         grabberRow = null
         closeButton = null
         settingsButton = null
-        captionsToggleButton = null
         tuneButton = null
         voiceGroup = null
         settingsPanel = null
@@ -273,7 +270,6 @@ class SubtitleOverlayController(
         voiceToggle = null
         resizeHandle = null
         sameLanguageMode = false
-        captionsVisible = true
         inputText = ""
         outputText = ""
         lastInputLineCount = 0
@@ -608,15 +604,6 @@ class SubtitleOverlayController(
         val gear = roundButton("⚙", 16f, "เปิดการตั้งค่าแอป") { onSettingsRequested() }
         settingsButton = gear
         strip.addView(gear)
-
-        val captionsToggle = roundButton("ซ่อน", 9f, "ซ่อนซับไตเติล") { button ->
-            captionsVisible = !captionsVisible
-            button.text = if (captionsVisible) "ซ่อน" else "แสดง"
-            button.contentDescription = if (captionsVisible) "ซ่อนซับไตเติล" else "แสดงซับไตเติล"
-            applyLayoutMode()
-        }
-        captionsToggleButton = captionsToggle
-        strip.addView(captionsToggle)
 
         // Restart: tap = restart translation only, long-press = relaunch the app.
         val restart = roundButton(
@@ -1269,9 +1256,9 @@ class SubtitleOverlayController(
     /** Switch bilingual (split + divider) vs translation-only (full height scroll). */
     private fun applyLayoutMode() {
         val bilingual = effectiveBilingual()
-        inputSection?.visibility = if (captionsVisible && bilingual) View.VISIBLE else View.GONE
-        dividerView?.visibility = if (captionsVisible && bilingual) View.VISIBLE else View.GONE
-        outputScroll?.visibility = if (captionsVisible) View.VISIBLE else View.GONE
+        inputSection?.visibility = if (bilingual) View.VISIBLE else View.GONE
+        dividerView?.visibility = if (bilingual) View.VISIBLE else View.GONE
+        outputScroll?.visibility = View.VISIBLE
 
         // When translation-only, output takes all remaining weight.
         // When bilingual, both panes share weight 1f each.
@@ -1413,8 +1400,8 @@ class SubtitleOverlayController(
                         val (screenW, screenH, _) = screenMetrics()
                         params.width = clampWidth(params.width, screenW)
                         params.height = clampHeight(params.height, screenH)
-                        params.x += dx.roundToInt()
-                        params.y += dy.roundToInt()
+                        params.x = safeCoerce(params.x + dx.roundToInt(), 0, max(0, screenW - params.width))
+                        params.y = safeCoerce(params.y + dy.roundToInt(), 0, max(0, screenH - params.height))
                         windowManager.updateViewLayout(root, params)
                         true
                     }
