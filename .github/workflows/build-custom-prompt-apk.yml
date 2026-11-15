@@ -17,9 +17,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Apply Groq custom prompt changes
-        run: git apply .github/patches/groq-custom-prompt.patch
-
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
