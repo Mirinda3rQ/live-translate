@@ -53,6 +53,7 @@ import com.livetranslate.app.ui.theme.AppTheme
 import com.livetranslate.app.util.PermissionUtils
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import top.yukonga.miuix.kmp.basic.NavigationBar
 import top.yukonga.miuix.kmp.basic.NavigationBarDisplayMode
 import top.yukonga.miuix.kmp.basic.NavigationBarItem
@@ -268,6 +269,18 @@ class MainActivity : ComponentActivity() {
                                             SessionBus.stop()
                                             SubtitleSessionService.stop(this@MainActivity)
                                         }
+                                    }
+                                },
+                                onRestart = {
+                                    scope.launch {
+                                        // A fresh MediaProjection grant is requested by the same
+                                        // permission flow used by Start; no second tap is needed.
+                                        runCatching {
+                                            SessionBus.stop()
+                                            SubtitleSessionService.stop(this@MainActivity)
+                                        }
+                                        delay(500L)
+                                        requestStartSubtitle()
                                     }
                                 },
                                 onExport = { subtitleVm.exportLastSession() },
