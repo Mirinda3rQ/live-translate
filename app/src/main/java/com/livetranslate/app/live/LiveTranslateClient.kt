@@ -486,20 +486,14 @@ class LiveTranslateClient {
         val model = config.modelId.trim().removePrefix("models/")
         val target = config.targetLanguageCode.trim().ifBlank { "zh-Hans" }
 
-        val prompt = config.customPrompt.trim()
+        val prompt = config.customPrompt.trim().ifBlank {
+            com.livetranslate.app.data.UserSettings.Defaults.DEFAULT_SYSTEM_PROMPT
+        }
 
+        // Shared system prompt drives both default and custom translation behavior.
+        // Gemini Live custom-instruction mode does not combine with translationConfig.
         val generationConfig = JSONObject()
             .put("responseModalities", JSONArray().put("AUDIO"))
-        // Custom prompt mode: regular Live models t
-       // translationConfig, so only send translationConfig when no prompt is set.
-        if (prompt.isEmpty()) {
-            generationConfig.put(
-                "translationConfig",
-                JSONObject()
-                    .put("targetLanguageCode", target)
-                    .put("echoTargetLanguage", config.echoTargetLanguage),
-            )
-        }
 
         val resumption = config.resumptionHandle?.let { handle ->
             JSONObject().put("handle", handle)
@@ -516,15 +510,13 @@ class LiveTranslateClient {
                 JSONObject().put("slidingWindow", JSONObject()),
             )
 
-        if (prompt.isNotEmpty()) {
-            setup.put(
-                "systemInstruction",
-                JSONObject().put(
-                    "parts",
-                    JSONArray().put(JSONObject().put("text", prompt)),
-                ),
-            )
-        }
+        setup.put(
+            "systemInstruction",
+            JSONObject().put(
+                "parts",
+                JSONArray().put(JSONObject().put("text", prompt)),
+            ),
+        )
 
         return JSONObject().put("setup", setup).toString()
     }
