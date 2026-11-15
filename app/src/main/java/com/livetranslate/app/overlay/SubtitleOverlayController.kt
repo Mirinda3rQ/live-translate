@@ -598,7 +598,7 @@ class SubtitleOverlayController(
             }
         }
 
-        val tune = roundButton("Aa", 12f, "ปรับขนาดตัวอักษร พื้นหลัง และเสียง") {
+        val tune = roundButton("Aa", 12f, "เปิดตั้งค่าด่วน: ขนาดตัวอักษร พื้นหลัง และการแสดงต้นฉบับ") {
             toggleSettingsPanel(density)
         }
         tuneButton = tune
@@ -618,7 +618,12 @@ class SubtitleOverlayController(
         strip.addView(captionsToggle)
 
         // Restart: tap = restart translation only, long-press = relaunch the app.
-        val restart = roundButton("↻", 17f, "Restart translation (long-press: restart app)") {
+        val restart = roundButton(
+            "↻",
+            17f,
+            "รีสตาร์ทการแปล (แตะค้างเพื่อเริ่มแอปใหม่และขอสิทธิ์จับเสียงอีกครั้ง)",
+            tint = Color.argb(110, 52, 130, 255),
+        ) {
             onRestartRequested()
         }.apply {
             setOnLongClickListener {
@@ -758,17 +763,21 @@ class SubtitleOverlayController(
         return root
     }
 
+    /**
+     * Compact floating quick settings: only the controls users adjust most often.
+     * Provider, API keys, model and prompt stay in the full Settings screen.
+     */
     private fun buildSettingsPanel(density: Float): LinearLayout {
         fun dp(value: Int) = (value * density).roundToInt()
         val accent = Color.rgb(52, 130, 255)
         val panel = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
-            setPadding(dp(14), dp(8), dp(14), dp(10))
+            setPadding(dp(12), dp(8), dp(12), dp(8))
             background = GradientDrawable().apply {
-                cornerRadius = 16 * density
-                setColor(Color.argb(238, 24, 24, 28))
-                setStroke(max(1, dp(1)), Color.argb(40, 255, 255, 255))
+                cornerRadius = 14 * density
+                setColor(Color.argb(242, 24, 27, 34))
+                setStroke(max(1, dp(1)), Color.argb(48, 255, 255, 255))
             }
             isClickable = true
             layoutParams = LinearLayout.LayoutParams(
@@ -776,66 +785,79 @@ class SubtitleOverlayController(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
             ).apply {
                 topMargin = dp(2)
-                bottomMargin = dp(6)
+                bottomMargin = dp(5)
             }
         }
 
-        fun sectionTitle(text: String) = TextView(context).apply {
-            this.text = text
-            textSize = 10f
-            setTextColor(Color.argb(150, 255, 255, 255))
-            typeface = Typeface.DEFAULT_BOLD
+        val heading = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = dp(6) }
+                dp(28),
+            )
         }
+        heading.addView(TextView(context).apply {
+            text = "ตั้งค่าด่วน"
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        heading.addView(TextView(context).apply {
+            text = "เสร็จ"
+            textSize = 11f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.rgb(125, 177, 255))
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(4), dp(4), dp(4))
+            contentDescription = "ปิดตั้งค่าด่วน"
+            setOnClickListener {
+                suppressNextToggle = true
+                toggleSettingsPanel(density)
+            }
+        })
+        panel.addView(heading)
 
-        fun addSlider(
-            parent: LinearLayout,
+        fun addCompactSlider(
             label: String,
             initialProgress: Int,
             maxProgress: Int,
             valueText: (Int) -> String,
-            toSettings: (UserSettings, Int) -> UserSettings,
+            update: (UserSettings, Int) -> UserSettings,
         ): SeekBar {
-            val head = LinearLayout(context).apply {
+            val header = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                ).apply { topMargin = dp(4) }
+                    dp(18),
+                )
             }
-            val title = TextView(context).apply {
+            header.addView(TextView(context).apply {
                 text = label
-                textSize = 12f
-                setTextColor(Color.WHITE)
+                textSize = 11f
+                setTextColor(Color.argb(225, 255, 255, 255))
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            }
+            })
             val value = TextView(context).apply {
                 text = valueText(initialProgress)
-                textSize = 11f
-                setTextColor(Color.WHITE)
+                textSize = 10f
                 typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                setPadding(dp(8), dp(2), dp(8), dp(2))
-                background = GradientDrawable().apply {
-                    cornerRadius = 10 * density
-                    setColor(Color.argb(60, 52, 130, 255))
-                }
+                setTextColor(Color.WHITE)
             }
-            head.addView(title)
-            head.addView(value)
-            val slider = SeekBar(context).apply {
+            header.addView(value)
+            panel.addView(header)
+
+            return SeekBar(context).apply {
                 max = maxProgress
-                progress = initialProgress
+                progress = initialProgress.coerceIn(0, maxProgress)
                 progressTintList = ColorStateList.valueOf(accent)
                 thumbTintList = ColorStateList.valueOf(Color.WHITE)
-                progressBackgroundTintList = ColorStateList.valueOf(Color.argb(70, 255, 255, 255))
+                progressBackgroundTintList = ColorStateList.valueOf(Color.argb(75, 255, 255, 255))
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
-                    dp(34),
+                    dp(28),
                 )
                 setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                     override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
@@ -843,104 +865,88 @@ class SubtitleOverlayController(
                     }
                     override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
                     override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                        onSettingsChanged { current -> toSettings(current, seekBar?.progress ?: initialProgress) }
+                        onSettingsChanged { current ->
+                            update(current, seekBar?.progress ?: initialProgress)
+                        }
                     }
                 })
-            }
-            parent.addView(head)
-            parent.addView(slider)
-            return slider
+            }.also(panel::addView)
         }
 
-        fun addToggle(
-            parent: LinearLayout,
-            label: String,
-            checked: Boolean,
-            update: (UserSettings, Boolean) -> UserSettings,
-        ): Switch {
-            val toggle = Switch(context).apply {
-                text = label
-                textSize = 12f
-                setTextColor(Color.WHITE)
-                isChecked = checked
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    thumbTintList = ColorStateList.valueOf(Color.WHITE)
-                    trackTintList = ColorStateList.valueOf(Color.argb(150, 52, 130, 255))
-                }
-                setOnCheckedChangeListener { _, value ->
-                    if (!syncingPanelControls) onSettingsChanged { current -> update(current, value) }
-                }
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    dp(40),
-                )
-            }
-            parent.addView(toggle)
-            return toggle
+        fontSlider = addCompactSlider(
+            label = "ขนาดตัวอักษร",
+            initialProgress = (settings.fontSizeSp.toInt() - 12).coerceIn(0, 20),
+            maxProgress = 20,
+            valueText = { "${it + 12} sp" },
+        ) { current, progress ->
+            current.copy(fontSizeSp = (progress + 12).toFloat())
         }
 
-        // ---- Look ----
-        panel.addView(sectionTitle("รูปแบบซับ"))
-        fontSlider = addSlider(panel, "ขนาดตัวอักษร", (settings.fontSizeSp.toInt() - 12).coerceIn(0, 20), 20,
-            { "${it + 12} sp" }) { current, progress -> current.copy(fontSizeSp = (progress + 12).toFloat()) }
-        backgroundSlider = addSlider(panel, "ความทึบพื้นหลัง", (settings.backgroundAlpha * 100).toInt().coerceIn(0, 95), 95,
-            { "$it%" }) { current, progress -> current.copy(backgroundAlpha = progress / 100f) }
+        backgroundSlider = addCompactSlider(
+            label = "ความทึบพื้นหลัง",
+            initialProgress = (settings.backgroundAlpha * 100).toInt().coerceIn(0, 95),
+            maxProgress = 95,
+            valueText = { "${it}%" },
+        ) { current, progress ->
+            current.copy(backgroundAlpha = progress / 100f)
+        }
 
-        // Quick presets as three equal chips.
+        bilingualToggle = Switch(context).apply {
+            text = "แสดงต้นฉบับคู่กับคำแปล"
+            textSize = 11f
+            setTextColor(Color.WHITE)
+            isChecked = settings.bilingual
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                thumbTintList = ColorStateList.valueOf(Color.WHITE)
+                trackTintList = ColorStateList.valueOf(Color.argb(155, 52, 130, 255))
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(36),
+            )
+            setOnCheckedChangeListener { _, checked ->
+                if (!syncingPanelControls) {
+                    onSettingsChanged { current -> current.copy(bilingual = checked) }
+                }
+            }
+        }
+        panel.addView(bilingualToggle)
+
         val presetRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(40),
-            ).apply { topMargin = dp(4) }
+                dp(32),
+            )
         }
-        fun presetChip(label: String, last: Boolean, transform: (UserSettings) -> UserSettings) = TextView(context).apply {
-            text = label
-            textSize = 11f
-            gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
-            background = GradientDrawable().apply {
-                cornerRadius = 10 * density
-                setColor(Color.argb(46, 255, 255, 255))
+        fun preset(label: String, last: Boolean, transform: (UserSettings) -> UserSettings) =
+            TextView(context).apply {
+                text = label
+                textSize = 10f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(Color.WHITE)
+                background = GradientDrawable().apply {
+                    cornerRadius = 9 * density
+                    setColor(Color.argb(52, 255, 255, 255))
+                }
+                layoutParams = LinearLayout.LayoutParams(0, dp(28), 1f).apply {
+                    if (!last) marginEnd = dp(6)
+                }
+                setOnClickListener {
+                    suppressNextToggle = true
+                    onSettingsChanged(transform)
+                }
             }
-            layoutParams = LinearLayout.LayoutParams(0, dp(34), 1f).apply {
-                if (!last) marginEnd = dp(6)
-            }
-            setOnClickListener { onSettingsChanged(transform) }
-        }
-        presetRow.addView(presetChip("กะทัดรัด", false) {
-            it.copy(fontSizeSp = 14f, backgroundAlpha = 0.45f, bilingual = false)
+        presetRow.addView(preset("Compact · ซับสั้น", false) {
+            it.copy(fontSizeSp = 15f, backgroundAlpha = 0.52f, bilingual = false)
         })
-        presetRow.addView(presetChip("มาตรฐาน", false) {
-            it.copy(fontSizeSp = 18f, backgroundAlpha = 0.65f)
-        })
-        presetRow.addView(presetChip("อ่านง่าย", true) {
-            it.copy(fontSizeSp = 26f, backgroundAlpha = 0.8f, bilingual = true)
+        presetRow.addView(preset("Readable · อ่านง่าย", true) {
+            it.copy(fontSizeSp = 22f, backgroundAlpha = 0.78f, bilingual = true)
         })
         panel.addView(presetRow)
 
-        bilingualToggle = addToggle(panel, "แสดงต้นฉบับคู่กับคำแปล", settings.bilingual) { current, value ->
-            current.copy(bilingual = value)
-        }
-
-        // ---- Voice (hidden for providers that never play translated audio) ----
-        val voice = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-            )
-        }
-        voice.addView(sectionTitle("เสียงแปล"))
-        volumeSlider = addSlider(voice, "ระดับเสียง", (settings.translatedVolume * 100).toInt().coerceIn(0, 200), 200,
-            { "$it%" }) { current, progress -> current.copy(translatedVolume = progress / 100f) }
-        voiceToggle = addToggle(voice, "เปิดเสียงแปล", settings.playTranslatedAudio) { current, value ->
-            current.copy(playTranslatedAudio = value)
-        }
-        voice.visibility = if (providerHasVoice()) View.VISIBLE else View.GONE
-        voiceGroup = voice
-        panel.addView(voice)
         return panel
     }
 
