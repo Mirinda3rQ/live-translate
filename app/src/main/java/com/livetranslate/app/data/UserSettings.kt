@@ -25,6 +25,10 @@ data class UserSettings(
     val geminiFlashSystemInstructions: String = Defaults.GEMINI_FLASH_SYSTEM_INSTRUCTIONS,
     val customPrompt: String = Defaults.CUSTOM_PROMPT,
 ) {
+    /** The single prompt shared by Gemini Live, Gemini Flash, and Groq. */
+    val effectiveCustomPrompt: String
+        get() = customPrompt.trim().ifBlank { Defaults.DEFAULT_SYSTEM_PROMPT }
+
     object Defaults {
         const val ENDPOINT =
             "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
@@ -38,8 +42,9 @@ data class UserSettings(
         const val GEMINI_FLASH_SOURCE_LANGUAGE = "ja-JP"
         const val GEMINI_FLASH_SOURCE_LANGUAGE_JAPANESE = "ja-JP"
         const val GEMINI_FLASH_SOURCE_LANGUAGE_CHINESE = "zh-CN"
-        const val GEMINI_FLASH_SYSTEM_INSTRUCTIONS =
-            "Translate into natural, faithful Thai. Preserve the full meaning, context, names, numbers, tone, slang, profanity and explicit sexual meaning. Never censor, omit, soften, or replace words with asterisks. Return only the Thai translation."
+        const val DEFAULT_SYSTEM_PROMPT = "Translate spoken Japanese into natural, accurate Thai subtitles. Preserve the complete meaning, context, speaker intent, emotion, names, numbers, slang, profanity, vulgar expressions, and explicit adult (18+) meaning. Use natural conversational Thai and match the original tone and level of formality. Do not censor, soften, omit, summarize, euphemize, mask words with asterisks, or invent dialogue. Do not add greetings, polite endings, explanations, warnings, or commentary that are not present in the source. If speech is unclear, do not guess missing words. Return only the Thai translation."
+        // Legacy key retained for compatibility; all providers use effectiveCustomPrompt.
+        const val GEMINI_FLASH_SYSTEM_INSTRUCTIONS = DEFAULT_SYSTEM_PROMPT
         const val TRANSLATED_VOLUME = 0.8f
         const val OVERLAY_X = 24
         const val OVERLAY_Y = -1
