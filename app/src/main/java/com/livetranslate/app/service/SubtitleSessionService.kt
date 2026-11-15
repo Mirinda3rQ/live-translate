@@ -450,7 +450,7 @@ class SubtitleSessionService : Service() {
                                 val translateWithGemini = suspend {
                                     flashTranslationClient.translateAudioToThai(
                                         pcm16kMono = pcm,
-                                        systemInstructions = currentSettings.geminiFlashSystemInstructions,
+                                        systemInstructions = currentSettings.effectiveCustomPrompt,
                                         apiKey = geminiKey,
                                     )
                                 }
@@ -474,6 +474,7 @@ class SubtitleSessionService : Service() {
                                                 groqKey = apiKey,
                                                 geminiKey = geminiKey,
                                                 speechModel = app.apiKeyStore.getGroqSpeechModel(),
+                                                systemPrompt = currentSettings.effectiveCustomPrompt,
                                             )
                                         } else {
                                             groqTranslationClient.translatePcmToThai(
@@ -481,6 +482,7 @@ class SubtitleSessionService : Service() {
                                                 apiKey = apiKey,
                                                 speechModel = app.apiKeyStore.getGroqSpeechModel(),
                                                 chatModel = groqChatModel,
+                                                systemPrompt = currentSettings.effectiveCustomPrompt,
                                             )
                                         }).also {
                                             if (usingGeminiFallback) {
@@ -511,7 +513,7 @@ class SubtitleSessionService : Service() {
                             } else {
                                 flashTranslationClient.translateAudioToThai(
                                     pcm16kMono = pcm,
-                                    systemInstructions = currentSettings.geminiFlashSystemInstructions,
+                                    systemInstructions = currentSettings.effectiveCustomPrompt,
                                     apiKey = apiKey,
                                 )
                             }
@@ -593,12 +595,13 @@ class SubtitleSessionService : Service() {
         groqKey: String,
         geminiKey: String,
         speechModel: String,
+        systemPrompt: String,
     ): String {
         val transcript = groqTranslationClient.transcribePcm(pcm, groqKey, speechModel)
         if (transcript.isBlank()) return ""
         val context = recentTranscripts.toList()
         val translated = try {
-            flashTranslationClient.translateTranscriptToThai(transcript, context, geminiKey)
+            flashTranslationClient.translateTranscriptToThai(transcript, context, geminiKey, systemPrompt)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -608,6 +611,7 @@ class SubtitleSessionService : Service() {
                 apiKey = groqKey,
                 chatModel = GroqTranslationClient.DEFAULT_CHAT_MODEL,
                 previousLines = context,
+                systemPrompt = systemPrompt,
             )
         }
         recentTranscripts.addLast(transcript)
@@ -657,7 +661,7 @@ class SubtitleSessionService : Service() {
                             try {
                                 val translated = flashTranslationClient.translateJapaneseToThai(
                                     transcript = text,
-                                    systemInstructions = currentSettings.geminiFlashSystemInstructions,
+                                    systemInstructions = currentSettings.effectiveCustomPrompt,
                                     apiKey = apiKey,
                                 )
                                 if (stopping) return@withLock
