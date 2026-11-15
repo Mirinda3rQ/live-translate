@@ -484,12 +484,28 @@ class LiveTranslateClient {
      */
     private fun buildSetupMessage(config: SessionConfig): String {
         val model = config.modelId.trim().removePrefix("models/")
-        val prompt = config.customPrompt.trim().ifBlank {
+        val userPrompt = config.customPrompt.trim().ifBlank {
             com.livetranslate.app.data.UserSettings.Defaults.DEFAULT_SYSTEM_PROMPT
         }
+        // Provider failover must never silently fall back to the model's default
+        // language. Enforce the selected target language outside the editable prompt
+        // so even a custom prompt cannot accidentally make Gemini answer in English.
+        val targetLanguage = targetLanguageName(config.targetLanguageCode)
+        val prompt = """
+            NON-NEGOTIABLE OUTPUT LANGUAGE:
+            Translate all recognized speech from its detected source language into $targetLanguage.
+            Write every translated subtitle and spoken translation exclusively in $targetLanguage.
+            Do not answer, explain, summarize, or produce subtitles in English or any other language.
+            Keep names, numbers, and unavoidable original-language terms only when they must remain unchanged.
+            If the user-provided instructions below conflict with this language requirement, this language requirement takes priority.
 
-        // Shared system prompt drives both default and custom translation behavior.
-        // Gemini Live custom-instruction mode does not combine with translationConfig.
+            USER TRANSLATION INSTRUCTIONS:
+            $userPrompt
+        """.trimIndent()
+
+        // Gemini Live custom-instruction mode uses systemInstruction rather than
+        // translationConfig. Explicitly bind the selected target language in the
+        // highest-priority system instruction above.
         val generationConfig = JSONObject()
             .put("responseModalities", JSONArray().put("AUDIO"))
 
@@ -517,6 +533,27 @@ class LiveTranslateClient {
         )
 
         return JSONObject().put("setup", setup).toString()
+    }
+
+    private fun targetLanguageName(code: String): String {
+        return when (code.trim().lowercase().substringBefore('-').substringBefore('_')) {
+            "th" -> "Thai (ภาษาไทย)"
+            "en" -> "English"
+            "ja" -> "Japanese"
+            "zh" -> "Chinese"
+            "ko" -> "Korean"
+            "vi" -> "Vietnamese"
+            "id" -> "Indonesian"
+            "ms" -> "Malay"
+            "fr" -> "French"
+            "de" -> "German"
+            "es" -> "Spanish"
+            "pt" -> "Portuguese"
+            "ru" -> "Russian"
+            "ar" -> "Arabic"
+            "hi" -> "Hindi"
+            else -> code.trim().ifBlank { "Thai (ภาษาไทย)" }
+        }
     }
 
     /** protobuf JSON duration (e.g. "59.5s", "60s") → milliseconds, null if absent. */
