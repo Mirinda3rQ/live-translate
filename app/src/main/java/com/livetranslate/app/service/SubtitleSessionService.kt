@@ -32,6 +32,7 @@ import com.livetranslate.app.data.TranslationProvider
 import com.livetranslate.app.live.LiveTranslateClient
 import com.livetranslate.app.live.GeminiFlashTranslationClient
 import com.livetranslate.app.live.GroqRateLimitException
+import com.livetranslate.app.live.GroqCredentialException
 import com.livetranslate.app.live.GroqRefusalException
 import com.livetranslate.app.live.GroqTranslationClient
 import java.io.ByteArrayOutputStream
