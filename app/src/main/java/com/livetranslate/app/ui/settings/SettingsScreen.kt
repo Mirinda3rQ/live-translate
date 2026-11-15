@@ -126,7 +126,8 @@ fun SettingsScreen(
             subtitle = stringResource(R.string.settings_subtitle),
         )
 
-        // ---------------------------------------------------------------- Provider
+        // ---------------------------------------------------------------- Provider & models
+        CategoryHeader("AI Provider & Models", "เลือกผู้ให้บริการและรูปแบบการประมวลผลเสียง")
         SectionTitle("ผู้ให้บริการแปลภาษา")
         SectionCard {
             Column(
@@ -175,7 +176,8 @@ fun SettingsScreen(
             }
         }
 
-        // ---------------------------------------------------------------- API key
+        // ---------------------------------------------------------------- API key manager
+        CategoryHeader("API Key Manager", "จัดการคีย์หลัก คีย์สำรอง และทดสอบการเชื่อมต่อ")
         SectionTitle(if (isGroq) "Groq API Keys · สูงสุด 5 รายการ" else stringResource(R.string.settings_api))
         SectionCard {
             Column(
@@ -305,7 +307,8 @@ fun SettingsScreen(
             }
         }
 
-        // ---------------------------------------------------------------- Groq models
+        // ---------------------------------------------------------------- Transcription & translation
+        CategoryHeader("Transcription & Translation", "แยกโมเดลถอดเสียงและโมเดลแปล พร้อมตรวจจับภาษาต้นฉบับอัตโนมัติ")
         if (isGroq) {
             SectionTitle("โมเดล")
             SectionCard {
@@ -344,7 +347,8 @@ fun SettingsScreen(
             }
         }
 
-        // ---------------------------------------------------------------- Appearance
+        // ---------------------------------------------------------------- Subtitle display
+        CategoryHeader("Subtitle Display", "ปรับรูปแบบคำบรรยายและดูตัวอย่างก่อนใช้งาน")
         SectionTitle(stringResource(R.string.settings_appearance))
         SectionCard {
             Column(
@@ -469,6 +473,7 @@ fun SettingsScreen(
         }
 
         // ---------------------------------------------------------------- Advanced
+        CategoryHeader("Advanced", "Custom Prompt และตัวเลือกที่ไม่จำเป็นต้องปรับบ่อย")
         SectionTitle("ขั้นสูง")
         SectionCard {
             Column(modifier = Modifier.padding(vertical = 4.dp)) {
@@ -633,6 +638,31 @@ private fun appFieldColors(): TextFieldColors {
         focusedPlaceholderColor = scheme.onSurfaceVariantSummary,
         unfocusedPlaceholderColor = scheme.onSurfaceVariantSummary,
     )
+}
+
+@Composable
+private fun CategoryHeader(
+    title: String,
+    description: String,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 14.dp, start = 4.dp, end = 4.dp, bottom = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Text(
+            text = title,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            color = Booth.Accent,
+        )
+        Text(
+            text = description,
+            fontSize = 12.sp,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        )
+    }
 }
 
 @Composable
