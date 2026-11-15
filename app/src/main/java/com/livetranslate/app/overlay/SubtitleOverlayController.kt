@@ -599,7 +599,7 @@ class SubtitleOverlayController(
             }
         }
 
-        val tune = roundButton("Aa", 12f, "เปิดตั้งค่าด่วน: ขนาดตัวอักษร พื้นหลัง และการแสดงต้นฉบับ") {
+        val tune = roundButton("Aa", 12f, "ตั้งค่าด่วน: ขนาดตัวอักษร พื้นหลัง ต้นฉบับ และเสียงแปล") {
             toggleSettingsPanel(density)
         }
         tuneButton = tune
@@ -838,6 +838,7 @@ class SubtitleOverlayController(
             initialProgress: Int,
             maxProgress: Int,
             valueText: (Int) -> String,
+            target: LinearLayout = panel,
             update: (UserSettings, Int) -> UserSettings,
         ): SeekBar {
             val header = LinearLayout(context).apply {
@@ -861,7 +862,7 @@ class SubtitleOverlayController(
                 setTextColor(Color.WHITE)
             }
             header.addView(value)
-            panel.addView(header)
+            target.addView(header)
 
             return SeekBar(context).apply {
                 max = maxProgress
@@ -884,7 +885,7 @@ class SubtitleOverlayController(
                         }
                     }
                 })
-            }.also(panel::addView)
+            }.also(target::addView)
         }
 
         fontSlider = addCompactSlider(
@@ -926,6 +927,46 @@ class SubtitleOverlayController(
         }
         panel.addView(bilingualToggle)
 
+        // Voice controls are available only for providers that can return translated audio.
+        // Keep them in one group so provider changes hide/show the whole section.
+        val voiceControls = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = if (providerHasVoice()) View.VISIBLE else View.GONE
+        }
+        voiceGroup = voiceControls
+        panel.addView(voiceControls)
+
+        voiceToggle = Switch(context).apply {
+            text = "เปิดเสียงอ่านคำแปล"
+            textSize = 11f
+            setTextColor(Color.WHITE)
+            isChecked = settings.playTranslatedAudio
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                thumbTintList = ColorStateList.valueOf(Color.WHITE)
+                trackTintList = ColorStateList.valueOf(Color.argb(155, 52, 130, 255))
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(36),
+            )
+            setOnCheckedChangeListener { _, checked ->
+                if (!syncingPanelControls) {
+                    onSettingsChanged { current -> current.copy(playTranslatedAudio = checked) }
+                }
+            }
+        }
+        voiceControls.addView(voiceToggle)
+
+        volumeSlider = addCompactSlider(
+            label = "ระดับเสียงคำแปล",
+            initialProgress = (settings.translatedVolume * 100).toInt().coerceIn(0, 200),
+            maxProgress = 200,
+            valueText = { "$it%" },
+            target = voiceControls,
+        ) { current, progress ->
+            current.copy(translatedVolume = progress / 100f)
+        }
+
         val presetRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -953,13 +994,19 @@ class SubtitleOverlayController(
                     onSettingsChanged(transform)
                 }
             }
-        presetRow.addView(preset("Compact · ซับสั้น", false) {
+        presetRow.addView(preset("Compact · คำแปลอย่างเดียว", false) {
             it.copy(fontSizeSp = 15f, backgroundAlpha = 0.52f, bilingual = false)
         })
-        presetRow.addView(preset("Readable · อ่านง่าย", true) {
+        presetRow.addView(preset("Readable · ต้นฉบับ + แปล", true) {
             it.copy(fontSizeSp = 22f, backgroundAlpha = 0.78f, bilingual = true)
         })
         panel.addView(presetRow)
+        panel.addView(TextView(context).apply {
+            text = "Compact: ตัวอักษรเล็กและแสดงเฉพาะคำแปล  •  Readable: ตัวอักษรใหญ่และแสดงต้นฉบับคู่คำแปล"
+            textSize = 10f
+            setTextColor(Color.argb(175, 255, 255, 255))
+            setPadding(0, dp(4), 0, 0)
+        })
 
         return panel
     }
