@@ -1163,15 +1163,24 @@ class SubtitleSessionService : Service() {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
             putExtra(MainActivity.EXTRA_AUTO_START, true)
         }
-        stopEverything(AppStrings.get(R.string.status_restarting))
-        runCatching { startActivity(launchIntent) }
+        // Launch while this service is still foreground and the overlay tap
+        // is still a fresh user interaction. The activity's auto-start flow
+        // runs after this callback returns, by which time teardown is complete.
+        val launched = runCatching { startActivity(launchIntent) }
             .onFailure {
                 Log.e(TAG, "Could not relaunch app for automatic restart", it)
                 SessionBus.setStatus(
                     SessionBus.Status.Error,
                     AppStrings.get(R.string.status_restarting),
                 )
-            }
+            }.isSuccess
+        stopEverything(AppStrings.get(R.string.status_restarting))
+        if (!launched) {
+            SessionBus.setStatus(
+                SessionBus.Status.Error,
+                AppStrings.get(R.string.status_restarting),
+            )
+        }
     }
 
     private fun stopEverything(message: String, error: Boolean = false) {
