@@ -91,6 +91,8 @@ fun SettingsScreen(
     var revealGroqKey by remember { mutableStateOf(false) }
     var advancedOpen by remember { mutableStateOf(false) }
     var backupSaved by remember { mutableStateOf(false) }
+    var customPromptDraft by remember { mutableStateOf(settings.customPrompt) }
+    LaunchedEffect(settings.customPrompt) { customPromptDraft = settings.customPrompt }
 
     var endpointHydrated by remember { mutableStateOf(false) }
     var modelHydrated by remember { mutableStateOf(false) }
@@ -518,6 +520,37 @@ fun SettingsScreen(
                                 singleLine = true,
                                 shape = RoundedCornerShape(16.dp),
                                 colors = fieldColors,
+                            )
+                        }
+                        Text("Custom prompt", fontWeight = FontWeight.SemiBold)
+                        OutlinedTextField(
+                            value = customPromptDraft,
+                            onValueChange = { customPromptDraft = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            minLines = 4,
+                            maxLines = 10,
+                            label = { androidx.compose.material3.Text("Custom prompt") },
+                            placeholder = { androidx.compose.material3.Text("ใส่คำสั่งการแปลที่ต้องการใช้ร่วมกันทุกโมเดล...") },
+                            shape = RoundedCornerShape(16.dp),
+                            colors = fieldColors,
+                        )
+                        Hint("หากเว้นว่าง แอปจะใช้ Prompt เริ่มต้นสำหรับแปลภาษาญี่ปุ่นเป็นไทย หากกรอกข้อความ จะส่งข้อความนี้เป็น System Prompt ให้ Gemini Flash, Groq และ Gemini Live")
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Button(
+                                onClick = { viewModel.update { it.copy(customPrompt = customPromptDraft.trim()) } },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColorsPrimary(),
+                            ) { Text("บันทึก Prompt") }
+                            TextButton(
+                                text = "รีเซ็ตเป็นค่าเริ่มต้น",
+                                onClick = {
+                                    customPromptDraft = ""
+                                    viewModel.update { it.copy(customPrompt = "") }
+                                },
                             )
                         }
                     }
