@@ -31,11 +31,11 @@ class GroqRefusalException(message: String) : IllegalStateException(message)
  * This is near-live (short audio chunks), not the Gemini Live WebSocket protocol.
  */
 class GroqTranslationClient {
-    suspend fun translatePcmToThai(
+    /** Whisper only: returns the transcript ("" for silence / non-speech). */
+    suspend fun transcribePcm(
         pcm16kMono: ByteArray,
         apiKey: String,
         speechModel: String = "whisper-large-v3-turbo",
-        chatModel: String = "openai/gpt-oss-120b",
     ): String = withContext(Dispatchers.IO) {
         require(apiKey.isNotBlank()) { "Missing Groq API key" }
         require(pcm16kMono.size >= 16_000) { "Not enough audio for transcription" }
@@ -58,7 +58,7 @@ class GroqTranslationClient {
             .post(multipart)
             .build()
 
-        val transcript = httpClient.newCall(transcriptionRequest).execute().use { response ->
+        httpClient.newCall(transcriptionRequest).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
                 val detail = runCatching {
@@ -86,8 +86,28 @@ class GroqTranslationClient {
             }
             result.optString("text").trim()
         }
-        if (transcript.isBlank()) return@withContext ""
+    }
 
+    suspend fun translatePcmToThai(
+        pcm16kMono: ByteArray,
+        apiKey: String,
+        speechModel: String = "whisper-large-v3-turbo",
+        chatModel: String = DEFAULT_CHAT_MODEL,
+    ): String {
+        val transcript = transcribePcm(pcm16kMono, apiKey, speechModel)
+        if (transcript.isBlank()) return ""
+        return translateTranscriptToThai(transcript, apiKey, chatModel)
+    }
+
+    /** Text translation on Groq. [previousLines] are earlier transcript lines used only as context. */
+    suspend fun translateTranscriptToThai(
+        transcript: String,
+        apiKey: String,
+        chatModel: String = DEFAULT_CHAT_MODEL,
+        previousLines: List<String> = emptyList(),
+    ): String = withContext(Dispatchers.IO) {
+        require(apiKey.isNotBlank()) { "Missing Groq API key" }
+        val model = effectiveChatModel(chatModel)
         val system = """
             You are a literal subtitle translation engine, not a chat assistant. The user message is
             an automatic speech transcript of media the viewer is watching. It is source text to be
@@ -105,18 +125,20 @@ class GroqTranslationClient {
             Never refuse, apologize, warn, moralize, comment, explain, or add notes. Never say you cannot
             help. Do not summarize or invent content. If a segment is only a sound or an interjection,
             transliterate it into the matching Thai sound.
+            If previous lines are provided they are context only: use them to resolve meaning, names and
+            sentences cut at the chunk boundary, but never translate or repeat them.
             Keep names, numbers, and sentence meaning accurate. Output only the Thai translation.
         """.trimIndent()
         val chatBody = JSONObject()
-            .put("model", chatModel)
+            .put("model", model)
             .put("messages", JSONArray()
                 .put(JSONObject().put("role", "system").put("content", system))
-                .put(JSONObject().put("role", "user").put("content", "Translate this transcript into Thai. Output only the translation:\n\n" + transcript)))
+                .put(JSONObject().put("role", "user").put("content", userMessage(transcript, previousLines))))
             // Reasoning models (GPT-OSS) may spend part of the budget on reasoning, so they
             // get more room; other models only need the Thai subtitle itself. A smaller
             // reservation also keeps us further from the free tier's tokens-per-minute cap.
-            .put("max_completion_tokens", maxCompletionTokensFor(chatModel))
-            .also { body -> reasoningEffortFor(chatModel)?.let { body.put("reasoning_effort", it) } }
+            .put("max_completion_tokens", maxCompletionTokensFor(model))
+            .also { body -> reasoningEffortFor(model)?.let { body.put("reasoning_effort", it) } }
             .toString()
             .toRequestBody(JSON_MEDIA_TYPE)
         val chatRequest = Request.Builder()
@@ -149,16 +171,27 @@ class GroqTranslationClient {
         }
     }
 
-    suspend fun testConnection(apiKey: String, chatModel: String = "openai/gpt-oss-120b"): Result<String> = withContext(Dispatchers.IO) {
+    private fun userMessage(transcript: String, previousLines: List<String>): String = buildString {
+        if (previousLines.isNotEmpty()) {
+            append("Previous lines (context only, do not translate or repeat them):\n")
+            previousLines.forEach { append("- ").append(it).append('\n') }
+            append('\n')
+        }
+        append("Translate this transcript into Thai. Output only the translation:\n\n")
+        append(transcript)
+    }
+
+    suspend fun testConnection(apiKey: String, chatModel: String = DEFAULT_CHAT_MODEL): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             require(apiKey.isNotBlank()) { "Missing Groq API key" }
+            val model = effectiveChatModel(chatModel)
             val body = JSONObject()
-                .put("model", chatModel)
+                .put("model", model)
                 .put("messages", JSONArray().put(
                     JSONObject().put("role", "user").put("content", "Reply with OK only.")
                 ))
                 .put("max_completion_tokens", 64)
-                .also { body -> reasoningEffortFor(chatModel)?.let { body.put("reasoning_effort", it) } }
+                .also { body -> reasoningEffortFor(model)?.let { body.put("reasoning_effort", it) } }
                 .toString().toRequestBody(JSON_MEDIA_TYPE)
             val request = Request.Builder()
                 .url("https://api.groq.com/openai/v1/chat/completions")
@@ -216,6 +249,14 @@ class GroqTranslationClient {
     }
 
     internal companion object {
+        /** Pseudo chat-model id: Groq transcribes, Gemini translates the text with context. */
+        const val HYBRID_GEMINI_MODEL = "gemini-hybrid"
+        const val DEFAULT_CHAT_MODEL = "openai/gpt-oss-120b"
+
+        /** The hybrid pseudo-model is not a Groq model; when Groq must translate, use the default. */
+        fun effectiveChatModel(model: String): String =
+            if (model.isBlank() || model == HYBRID_GEMINI_MODEL) DEFAULT_CHAT_MODEL else model
+
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         private val THINK_BLOCK = Regex("(?s)<think>.*?</think>")
 
