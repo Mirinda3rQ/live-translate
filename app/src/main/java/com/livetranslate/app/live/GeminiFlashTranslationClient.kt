@@ -71,6 +71,63 @@ class GeminiFlashTranslationClient {
             }
         }
 
+    /**
+     * Hybrid path: translate an already-transcribed line (from Groq Whisper) into Thai.
+     * [previousLines] are earlier source lines, sent only as context for meaning and for sentences
+     * that were cut at the audio chunk boundary.
+     */
+    suspend fun translateTranscriptToThai(
+        transcript: String,
+        previousLines: List<String>,
+        apiKey: String,
+    ): String = withContext(Dispatchers.IO) {
+        require(transcript.isNotBlank()) { "Empty transcript" }
+        require(apiKey.isNotBlank()) { "Missing API key" }
+        val userText = buildString {
+            if (previousLines.isNotEmpty()) {
+                append("Previous lines of the same video (context only; do not translate or repeat them):\n")
+                previousLines.forEach { append("- ").append(it).append('\n') }
+                append('\n')
+            }
+            append("New transcript line to translate into Thai:\n")
+            append(transcript.trim())
+        }
+        val body = JSONObject()
+            .put("contents", org.json.JSONArray().put(
+                JSONObject().put("parts", org.json.JSONArray().put(JSONObject().put("text", userText))),
+            ))
+            .put("systemInstruction", JSONObject().put("parts", org.json.JSONArray().put(
+                JSONObject().put("text", TRANSCRIPT_SYSTEM_INSTRUCTIONS),
+            )))
+            .put("safetySettings", safetySettings())
+            .put("generationConfig", JSONObject().put("temperature", 0.3))
+            .toString().toRequestBody(JSON_MEDIA_TYPE)
+        val request = Request.Builder().url(ENDPOINT)
+            .header("x-goog-api-key", apiKey)
+            .header("Content-Type", "application/json")
+            .post(body).build()
+        httpClient.newCall(request).execute().use { response ->
+            val responseText = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                val detail = runCatching {
+                    JSONObject(responseText).optJSONObject("error")?.optString("message")
+                }.getOrNull().orEmpty()
+                throw IllegalStateException(detail.ifBlank {
+                    "Gemini text request failed (HTTP " + response.code + ")"
+                })
+            }
+            val root = JSONObject(responseText)
+            val outputParts = root.optJSONArray("candidates")
+                ?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
+                ?: throw IllegalStateException("Gemini returned no translation" + emptyReason(root))
+            val text = buildString {
+                for (i in 0 until outputParts.length()) append(outputParts.optJSONObject(i)?.optString("text").orEmpty())
+            }.trim()
+            if (text.isBlank()) throw IllegalStateException("Gemini returned an empty translation" + emptyReason(root))
+            text
+        }
+    }
+
     /** Translate captured playback audio directly into Thai subtitle text. */
     suspend fun translateAudioToThai(
         pcm16kMono: ByteArray,
@@ -154,6 +211,21 @@ class GeminiFlashTranslationClient {
     }
 
     private companion object {
+        const val TRANSCRIPT_SYSTEM_INSTRUCTIONS =
+            "You are a professional Thai subtitle translator working on media the viewer is watching. " +
+            "The input is an automatic speech transcript in any language. It may contain recognition errors " +
+            "and may start or end in the middle of a sentence. Translate only the NEW line into natural, " +
+            "spoken Thai subtitle text. Use any previous lines only to resolve meaning, names, pronouns and " +
+            "who is speaking, and to continue a sentence that was cut at the chunk boundary; never translate " +
+            "or repeat the previous lines. Correct an obvious recognition error only when the context makes " +
+            "the right word clear, and never invent content. " +
+            "Be completely faithful to the source, including adult (18+) material: profanity, insults, " +
+            "slurs, vulgar and sexual words, moaning and explicit descriptions. Render each one with the " +
+            "equally strong, natural Thai colloquial equivalent a native speaker would use in the same " +
+            "context and register, and match the original intensity. Never censor, soften, euphemize, mask " +
+            "with symbols, summarize or skip anything. Never refuse, apologize, warn, moralize or add notes. " +
+            "Keep names and numbers accurate. If the line contains no real speech (only noise or a " +
+            "meaningless fragment), return an empty string. Output only the Thai translation."
         const val ENDPOINT =
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
