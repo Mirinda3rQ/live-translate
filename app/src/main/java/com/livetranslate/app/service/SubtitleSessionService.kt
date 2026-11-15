@@ -468,23 +468,36 @@ class SubtitleSessionService : Service() {
                                                 "Groq ถอดเสียง + Gemini แปลเป็นไทย",
                                             )
                                         }
-                                        (if (useHybrid) {
-                                            translateHybrid(
-                                                pcm = pcm,
-                                                groqKey = apiKey,
-                                                geminiKey = geminiKey,
-                                                speechModel = app.apiKeyStore.getGroqSpeechModel(),
-                                                systemPrompt = currentSettings.effectiveCustomPrompt,
-                                            )
-                                        } else {
-                                            groqTranslationClient.translatePcmToThai(
-                                                pcm16kMono = pcm,
-                                                apiKey = apiKey,
-                                                speechModel = app.apiKeyStore.getGroqSpeechModel(),
-                                                chatModel = groqChatModel,
-                                                systemPrompt = currentSettings.effectiveCustomPrompt,
-                                            )
-                                        }).also {
+                                        val groqKeys = app.apiKeyStore.nextGroqApiKeys().ifEmpty { listOf(apiKey) }
+                                        var groqResult: String? = null
+                                        var lastRateLimit: GroqRateLimitException? = null
+                                        for ((keyIndex, groqKey) in groqKeys.withIndex()) {
+                                            try {
+                                                groqResult = if (useHybrid) {
+                                                    translateHybrid(
+                                                        pcm = pcm,
+                                                        groqKey = groqKey,
+                                                        geminiKey = geminiKey,
+                                                        speechModel = app.apiKeyStore.getGroqSpeechModel(),
+                                                        systemPrompt = currentSettings.effectiveCustomPrompt,
+                                                    )
+                                                } else {
+                                                    groqTranslationClient.translatePcmToThai(
+                                                        pcm16kMono = pcm,
+                                                        apiKey = groqKey,
+                                                        speechModel = app.apiKeyStore.getGroqSpeechModel(),
+                                                        chatModel = groqChatModel,
+                                                        systemPrompt = currentSettings.effectiveCustomPrompt,
+                                                    )
+                                                }
+                                                break
+                                            } catch (e: GroqRateLimitException) {
+                                                lastRateLimit = e
+                                                Log.w(TAG, "Groq key ${keyIndex + 1}/${groqKeys.size} rate limited")
+                                                if (keyIndex == groqKeys.lastIndex) throw e
+                                            }
+                                        }
+                                        (groqResult ?: lastRateLimit?.let { throw it } ?: "").also {
                                             if (usingGeminiFallback) {
                                                 usingGeminiFallback = false
                                                 SessionBus.setStatus(
