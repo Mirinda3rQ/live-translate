@@ -787,9 +787,6 @@ private fun SliderRow(
     }
 }
 
-/** Gemini API key rows (up to [ApiKeyStore.MAX_KEYS]) with add / remove buttons. */
-@Composable
-
 /** Groq credentials: the first row is primary; additional rows are failover keys. */
 @Composable
 private fun GroqKeyFields(
@@ -835,6 +832,8 @@ private fun GroqKeyFields(
     }
 }
 
+/** Gemini API key rows (up to [ApiKeyStore.MAX_KEYS]) with add / remove buttons. */
+@Composable
 private fun GeminiKeyFields(
     apiKeyFields: List<TextFieldValue>,
     reveal: Boolean,
