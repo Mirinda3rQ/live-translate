@@ -58,6 +58,14 @@ class ApiKeyStore(context: Context) {
         return keys[index % keys.size]
     }
 
+    /** Atomically advances the starting key and returns every configured key in failover order. */
+    fun nextGroqApiKeys(): List<String> {
+        val keys = getGroqApiKeys()
+        if (keys.isEmpty()) return emptyList()
+        val start = groqRotateIndex.getAndUpdate { (it + 1) % keys.size } % keys.size
+        return keys.drop(start) + keys.take(start)
+    }
+
     /** All Groq keys, starting at the selected key, for bounded failover attempts. */
     fun groqKeysFrom(startIndex: Int = 0): List<String> {
         val keys = getGroqApiKeys()
