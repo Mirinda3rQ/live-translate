@@ -161,7 +161,7 @@ class GroqTranslationClient {
             previousLines.forEach { append("- ").append(it).append('\n') }
             append('\n')
         }
-        append("Translate this transcript into Thai. Output only the translation:\n\n")
+        append("Source transcript (follow the system prompt and return only the translation):\n\n")
         append(transcript)
     }
 
