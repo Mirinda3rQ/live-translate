@@ -30,9 +30,7 @@ class GeminiFlashTranslationClient {
                     JSONObject().put(
                         "parts",
                         org.json.JSONArray().put(
-                            JSONObject().put("text", systemInstructions.trim().ifBlank {
-                                com.livetranslate.app.data.UserSettings.Defaults.DEFAULT_SYSTEM_PROMPT
-                            }),
+                            JSONObject().put("text", thaiOnlySystemInstruction(systemInstructions)),
                         ),
                     ),
                 )
@@ -66,7 +64,7 @@ class GeminiFlashTranslationClient {
                         append(parts.optJSONObject(i)?.optString("text").orEmpty())
                     }
                 }.trim()
-                translated.takeIf { it.isNotBlank() }
+                translated.takeIf { it.isNotBlank() }?.let(::rejectModelRefusal)
                     ?: throw IllegalStateException("Gemini returned an empty translation")
             }
         }
@@ -98,9 +96,7 @@ class GeminiFlashTranslationClient {
                 JSONObject().put("parts", org.json.JSONArray().put(JSONObject().put("text", userText))),
             ))
             .put("systemInstruction", JSONObject().put("parts", org.json.JSONArray().put(
-                JSONObject().put("text", systemInstructions.trim().ifBlank {
-                    com.livetranslate.app.data.UserSettings.Defaults.DEFAULT_SYSTEM_PROMPT
-                }),
+                JSONObject().put("text", thaiOnlySystemInstruction(systemInstructions)),
             )))
             .put("safetySettings", safetySettings())
             .put("generationConfig", JSONObject().put("temperature", 0.3))
@@ -127,7 +123,7 @@ class GeminiFlashTranslationClient {
                 for (i in 0 until outputParts.length()) append(outputParts.optJSONObject(i)?.optString("text").orEmpty())
             }.trim()
             if (text.isBlank()) throw IllegalStateException("Gemini returned an empty translation" + emptyReason(root))
-            text
+            rejectModelRefusal(text)
         }
     }
 
@@ -141,16 +137,14 @@ class GeminiFlashTranslationClient {
         require(apiKey.isNotBlank()) { "Missing API key" }
         val wav = pcm16kToWav(pcm16kMono, 16_000)
         val parts = org.json.JSONArray()
-            .put(JSONObject().put("text", "Listen to this audio and translate the spoken words according to the system prompt. Return only the translation."))
+            .put(JSONObject().put("text", "The audio may contain speech in ANY language, including English, Japanese, Chinese, Korean, or mixed languages. Identify the language from the audio yourself, understand the spoken words, and translate them into natural Thai. Never limit translation to Japanese or Chinese. Return only the Thai subtitle translation; if there is no intelligible speech, return an empty string."))
             .put(JSONObject().put("inlineData", JSONObject()
                 .put("mimeType", "audio/wav")
                 .put("data", android.util.Base64.encodeToString(wav, android.util.Base64.NO_WRAP))))
         val body = JSONObject()
             .put("contents", org.json.JSONArray().put(JSONObject().put("parts", parts)))
             .put("systemInstruction", JSONObject().put("parts", org.json.JSONArray().put(
-                JSONObject().put("text", systemInstructions.trim().ifBlank {
-                    com.livetranslate.app.data.UserSettings.Defaults.DEFAULT_SYSTEM_PROMPT
-                }),
+                JSONObject().put("text", thaiOnlySystemInstruction(systemInstructions)),
             )))
             .put("safetySettings", safetySettings())
             .toString().toRequestBody(JSON_MEDIA_TYPE)
@@ -174,7 +168,7 @@ class GeminiFlashTranslationClient {
                 ?: throw IllegalStateException("Gemini returned no subtitle text" + emptyReason(root))
             buildString {
                 for (i in 0 until outputParts.length()) append(outputParts.optJSONObject(i)?.optString("text").orEmpty())
-            }.trim().ifBlank { throw IllegalStateException("Gemini returned empty subtitles") }
+            }.trim().ifBlank { throw IllegalStateException("Gemini returned empty subtitles") }.let(::rejectModelRefusal)
         }
     }
 
@@ -183,6 +177,37 @@ class GeminiFlashTranslationClient {
      * profanity or sexual language. BLOCK_NONE is the loosest setting the API allows
      * (some content, e.g. child-safety, is always blocked regardless).
      */
+    /**
+     * Keep custom instructions, but put a non-overridable Thai output contract above them.
+     * This also protects quota failover from stale saved Japanese/Chinese-only prompts.
+     */
+    private fun thaiOnlySystemInstruction(userInstructions: String): String {
+        val userPrompt = userInstructions.trim().ifBlank {
+            com.livetranslate.app.data.UserSettings.Defaults.DEFAULT_SYSTEM_PROMPT
+        }
+        return """
+            MANDATORY TRANSLATION CONTRACT — HIGHEST PRIORITY:
+            Detect the source language automatically. Accept ANY source language, including English,
+            Japanese, Chinese, Korean, and mixed-language speech. Translate all intelligible content
+            into natural, accurate Thai (ภาษาไทย). Output Thai subtitles only; never answer in English
+            or another language. Never claim that you can only translate Japanese or Chinese.
+            Never apologize, refuse, explain limitations, or add commentary. If a segment is genuinely
+            unintelligible, return an empty string rather than inventing speech.
+            Preserve meaning, names, numbers, tone, slang, profanity, and explicit adult dialogue.
+
+            ADDITIONAL USER TRANSLATION INSTRUCTIONS:
+            $userPrompt
+        """.trimIndent()
+    }
+
+    /** Never display a model refusal as if it were a translated subtitle. */
+    private fun rejectModelRefusal(text: String): String {
+        val refusal = Regex("(?i)\\b(i['’]?m sorry|i am sorry|i can only translate|i can['’]?t fulfill|i cannot fulfill|i cannot help with that request|as an ai language model)\\b")
+        if (refusal.containsMatchIn(text)) {
+            throw IllegalStateException("Gemini returned a refusal instead of Thai subtitles; this segment was not displayed.")
+        }
+        return text
+    }
     private fun safetySettings(): org.json.JSONArray = org.json.JSONArray().apply {
         listOf(
             "HARM_CATEGORY_HARASSMENT",
