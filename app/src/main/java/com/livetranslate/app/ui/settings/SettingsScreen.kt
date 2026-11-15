@@ -76,6 +76,7 @@ fun SettingsScreen(
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val apiKeyFields by viewModel.apiKeyFields.collectAsStateWithLifecycle()
     val groqApiKey by viewModel.groqApiKey.collectAsStateWithLifecycle()
+    val groqApiKeyFields by viewModel.groqApiKeyFields.collectAsStateWithLifecycle()
     val groqChatModel by viewModel.groqChatModel.collectAsStateWithLifecycle()
     val groqSpeechModel by viewModel.groqSpeechModel.collectAsStateWithLifecycle()
     val testResult by viewModel.testResult.collectAsStateWithLifecycle()
@@ -112,7 +113,7 @@ fun SettingsScreen(
     val fieldColors = appFieldColors()
     val isGroq = settings.translationProvider == TranslationProvider.GROQ
     val hasGeminiKey = apiKeyFields.any { it.text.isNotBlank() }
-    val hasGroqKey = groqApiKey.isNotBlank()
+    val hasGroqKey = groqApiKeyFields.any { it.text.isNotBlank() }
 
     Column(
         modifier = modifier
@@ -184,24 +185,19 @@ fun SettingsScreen(
             ) {
                 if (isGroq) {
                     Hint("รับเฉพาะเสียงจากวิดีโอหรือสื่อที่กำลังเล่น ไม่ใช้ไมโครโฟน • แปลคำหยาบและเนื้อหา 18+ ตามบริบทของต้นฉบับ ไม่เซ็นเซอร์")
-                    OutlinedTextField(
-                        value = groqApiKey,
-                        onValueChange = viewModel::updateGroqApiKey,
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { androidx.compose.material3.Text("Groq API Key") },
-                        singleLine = true,
-                        visualTransformation = if (revealGroqKey) VisualTransformation.None else PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = fieldColors,
+                    Hint("เพิ่ม Groq API Key ได้สูงสุด 5 รายการ ระบบจะเก็บคีย์ไว้ในพื้นที่จัดเก็บแบบเข้ารหัส และใช้คีย์สำรองเมื่อจำเป็น")
+                    GroqKeyFields(
+                        apiKeyFields = groqApiKeyFields,
+                        reveal = revealGroqKey,
+                        viewModel = viewModel,
+                        fieldColors = fieldColors,
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.End,
                     ) {
                         TextButton(
-                            text = if (revealGroqKey) "ซ่อน API Key" else "แสดง API Key",
+                            text = if (revealGroqKey) "ซ่อน API Keys" else "แสดง API Keys",
                             onClick = { revealGroqKey = !revealGroqKey },
                         )
                     }
@@ -784,6 +780,52 @@ private fun SliderRow(
 
 /** Gemini API key rows (up to [ApiKeyStore.MAX_KEYS]) with add / remove buttons. */
 @Composable
+
+/** Groq credentials: the first row is primary; additional rows are failover keys. */
+@Composable
+private fun GroqKeyFields(
+    apiKeyFields: List<TextFieldValue>,
+    reveal: Boolean,
+    viewModel: SettingsViewModel,
+    fieldColors: TextFieldColors,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        apiKeyFields.forEachIndexed { index, field ->
+            val canAdd = index == apiKeyFields.lastIndex && apiKeyFields.size < ApiKeyStore.MAX_GROQ_KEYS
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = field,
+                    onValueChange = { viewModel.updateGroqApiKeyField(index, it) },
+                    modifier = Modifier.weight(1f),
+                    label = {
+                        androidx.compose.material3.Text(
+                            if (index == 0) "Groq Primary Key" else "Groq Backup Key $index",
+                        )
+                    },
+                    singleLine = true,
+                    visualTransformation = if (reveal) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = fieldColors,
+                )
+                if (canAdd) {
+                    IconButton(onClick = viewModel::addGroqApiKeyField, modifier = Modifier.size(40.dp)) {
+                        Icon(Icons.Outlined.Add, contentDescription = "เพิ่ม Groq API Key", tint = Booth.Accent)
+                    }
+                }
+                if (index > 0) {
+                    IconButton(
+                        onClick = { viewModel.removeGroqApiKeyField(index) },
+                        modifier = Modifier.size(40.dp),
+                    ) {
+                        Icon(Icons.Outlined.Remove, contentDescription = "ลบ Groq API Key", tint = Booth.Danger)
+                    }
+                }
+            }
+        }
+    }
+}
+
 private fun GeminiKeyFields(
     apiKeyFields: List<TextFieldValue>,
     reveal: Boolean,
