@@ -19,6 +19,9 @@ import java.util.concurrent.TimeUnit
  */
 class GroqRateLimitException(message: String, val retryAfterMs: Long) : IllegalStateException(message)
 
+/** Invalid/revoked credentials should be skipped in favor of the next configured key. */
+class GroqCredentialException(message: String) : IllegalStateException(message)
+
 /**
  * The Groq chat model refused to translate a chunk (content-policy style reply such as
  * "I'm sorry, but I can't help with that"). Never show that text as a subtitle; callers may
@@ -66,6 +69,9 @@ class GroqTranslationClient {
                     if (error is JSONObject) error.optString("message") else error?.toString().orEmpty()
                 }.getOrNull().orEmpty()
                 if (response.code == 429) throw rateLimited(response, detail)
+                if (response.code == 401 || response.code == 403) {
+                    throw GroqCredentialException(detail.ifBlank { "Groq API key rejected (HTTP ${response.code})" })
+                }
                 throw IllegalStateException(detail.ifBlank { "Groq transcription failed (HTTP ${response.code})" })
             }
             val result = JSONObject(body)
@@ -138,6 +144,9 @@ class GroqTranslationClient {
                     JSONObject(body).optJSONObject("error")?.optString("message")
                 }.getOrNull().orEmpty()
                 if (response.code == 429) throw rateLimited(response, detail)
+                if (response.code == 401 || response.code == 403) {
+                    throw GroqCredentialException(detail.ifBlank { "Groq API key rejected (HTTP ${response.code})" })
+                }
                 throw IllegalStateException(detail.ifBlank { "Groq translation failed (HTTP ${response.code})" })
             }
             // A blank completion means this audio chunk produced no caption.
