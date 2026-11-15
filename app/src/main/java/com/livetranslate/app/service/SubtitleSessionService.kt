@@ -35,6 +35,7 @@ import com.livetranslate.app.live.GroqRateLimitException
 import com.livetranslate.app.live.GroqCredentialException
 import com.livetranslate.app.live.GroqRefusalException
 import com.livetranslate.app.live.GroqTranslationClient
+import com.livetranslate.app.live.GroqTransientException
 import java.io.ByteArrayOutputStream
 import com.livetranslate.app.overlay.SubtitleOverlayController
 import com.livetranslate.app.ui.main.MainActivity
@@ -494,9 +495,9 @@ class SubtitleSessionService : Service() {
                                                 }
                                                 break
                                             } catch (e: GroqRateLimitException) {
-                                                lastRateLimit = e
-                                                Log.w(TAG, "Groq key ${keyIndex + 1}/${groqKeys.size} rate limited")
-                                                if (keyIndex == groqKeys.lastIndex) throw e
+                                                // A 429 is a provider/project quota signal, not proof that this
+                                                // individual key is bad. Do not rotate keys to evade shared limits.
+                                                throw e
                                             } catch (e: GroqCredentialException) {
                                                 lastCredentialError = e
                                                 Log.w(TAG, "Groq key ${keyIndex + 1}/${groqKeys.size} rejected")
@@ -538,6 +539,26 @@ class SubtitleSessionService : Service() {
                                         SessionBus.setStatus(
                                             SessionBus.Status.Running,
                                             "Groq เต็มโควตา ใช้ Gemini แปลแทนชั่วคราว",
+                                        )
+                                        translateWithGemini()
+                                    } catch (e: GroqTransientException) {
+                                        if (geminiKey.isBlank()) throw e
+                                        groqCooldownUntilMs = nowMs + 15_000L
+                                        usingGeminiFallback = true
+                                        Log.w(TAG, "Groq server unavailable; using Gemini Flash for this chunk", e)
+                                        SessionBus.setStatus(
+                                            SessionBus.Status.Running,
+                                            "Groq ขัดข้องชั่วคราว กำลังใช้ Gemini สำรอง",
+                                        )
+                                        translateWithGemini()
+                                    } catch (e: java.io.IOException) {
+                                        if (geminiKey.isBlank()) throw e
+                                        groqCooldownUntilMs = nowMs + 15_000L
+                                        usingGeminiFallback = true
+                                        Log.w(TAG, "Groq network error; using Gemini Flash for this chunk", e)
+                                        SessionBus.setStatus(
+                                            SessionBus.Status.Running,
+                                            "เครือข่าย Groq มีปัญหา กำลังใช้ Gemini สำรอง",
                                         )
                                         translateWithGemini()
                                     }
