@@ -28,6 +28,7 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.content.res.ColorStateList
 import android.widget.LinearLayout
+import android.widget.PopupMenu
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.Switch
@@ -621,11 +622,24 @@ class SubtitleOverlayController(
         val restart = roundButton(
             "↻",
             17f,
-            "รีสตาร์ทการแปล (แตะค้างเพื่อเริ่มแอปใหม่และขอสิทธิ์จับเสียงอีกครั้ง)",
+            "ตัวเลือกการเริ่มใหม่: เลือกรีสตาร์ทการแปลหรือเริ่มแอปใหม่",
             tint = Color.argb(110, 52, 130, 255),
-        ) {
-            onRestartRequested()
+        ) { button ->
+            val menu = PopupMenu(context, button)
+            menu.menu.add("เริ่มการแปลใหม่ (คงหน้าต่างและสิทธิ์จับเสียงเดิม)")
+                .setOnMenuItemClickListener {
+                    onRestartRequested()
+                    true
+                }
+            menu.menu.add("เริ่มแอปใหม่ (ขอสิทธิ์จับเสียงอีกครั้ง)")
+                .setOnMenuItemClickListener {
+                    onRestartAppRequested()
+                    true
+                }
+            menu.show()
         }.apply {
+            // Keep the shortcut for experienced users; the same action is now
+            // also discoverable from the tap menu.
             setOnLongClickListener {
                 suppressNextToggle = true
                 onRestartAppRequested()
