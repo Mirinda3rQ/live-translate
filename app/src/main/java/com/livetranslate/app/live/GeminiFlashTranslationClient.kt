@@ -90,7 +90,7 @@ class GeminiFlashTranslationClient {
                 previousLines.forEach { append("- ").append(it).append('\n') }
                 append('\n')
             }
-            append("New transcript line to translate into Thai:\n")
+            append("New transcript line (follow the system prompt):\n")
             append(transcript.trim())
         }
         val body = JSONObject()
@@ -141,7 +141,7 @@ class GeminiFlashTranslationClient {
         require(apiKey.isNotBlank()) { "Missing API key" }
         val wav = pcm16kToWav(pcm16kMono, 16_000)
         val parts = org.json.JSONArray()
-            .put(JSONObject().put("text", "Listen to this audio and translate the spoken words into natural Thai subtitles that stay faithful to the speaker's exact meaning, tone, slang and profanity. Never censor, soften or omit words. Return only the Thai translation."))
+            .put(JSONObject().put("text", "Listen to this audio and translate the spoken words according to the system prompt. Return only the translation."))
             .put(JSONObject().put("inlineData", JSONObject()
                 .put("mimeType", "audio/wav")
                 .put("data", android.util.Base64.encodeToString(wav, android.util.Base64.NO_WRAP))))
