@@ -31,7 +31,7 @@ class GeminiFlashTranslationClient {
                         "parts",
                         org.json.JSONArray().put(
                             JSONObject().put("text", systemInstructions.trim().ifBlank {
-                                com.livetranslate.app.data.UserSettings.Defaults.GEMINI_FLASH_SYSTEM_INSTRUCTIONS
+                                com.livetranslate.app.data.UserSettings.Defaults.DEFAULT_SYSTEM_PROMPT
                             }),
                         ),
                     ),
@@ -80,6 +80,7 @@ class GeminiFlashTranslationClient {
         transcript: String,
         previousLines: List<String>,
         apiKey: String,
+        systemInstructions: String = com.livetranslate.app.data.UserSettings.Defaults.DEFAULT_SYSTEM_PROMPT,
     ): String = withContext(Dispatchers.IO) {
         require(transcript.isNotBlank()) { "Empty transcript" }
         require(apiKey.isNotBlank()) { "Missing API key" }
@@ -97,7 +98,9 @@ class GeminiFlashTranslationClient {
                 JSONObject().put("parts", org.json.JSONArray().put(JSONObject().put("text", userText))),
             ))
             .put("systemInstruction", JSONObject().put("parts", org.json.JSONArray().put(
-                JSONObject().put("text", TRANSCRIPT_SYSTEM_INSTRUCTIONS),
+                JSONObject().put("text", systemInstructions.trim().ifBlank {
+                    com.livetranslate.app.data.UserSettings.Defaults.DEFAULT_SYSTEM_PROMPT
+                }),
             )))
             .put("safetySettings", safetySettings())
             .put("generationConfig", JSONObject().put("temperature", 0.3))
@@ -146,7 +149,7 @@ class GeminiFlashTranslationClient {
             .put("contents", org.json.JSONArray().put(JSONObject().put("parts", parts)))
             .put("systemInstruction", JSONObject().put("parts", org.json.JSONArray().put(
                 JSONObject().put("text", systemInstructions.trim().ifBlank {
-                    com.livetranslate.app.data.UserSettings.Defaults.GEMINI_FLASH_SYSTEM_INSTRUCTIONS
+                    com.livetranslate.app.data.UserSettings.Defaults.DEFAULT_SYSTEM_PROMPT
                 }),
             )))
             .put("safetySettings", safetySettings())
