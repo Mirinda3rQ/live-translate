@@ -91,7 +91,6 @@ fun SettingsScreen(
     var revealKey by remember { mutableStateOf(false) }
     var revealGroqKey by remember { mutableStateOf(false) }
     var advancedOpen by remember { mutableStateOf(false) }
-    var backupSaved by remember { mutableStateOf(false) }
     var customPromptDraft by remember { mutableStateOf(settings.customPrompt) }
     LaunchedEffect(settings.customPrompt) { customPromptDraft = settings.customPrompt }
 
@@ -177,7 +176,7 @@ fun SettingsScreen(
         }
 
         // ---------------------------------------------------------------- API key
-        SectionTitle(if (isGroq) "Groq API Key" else stringResource(R.string.settings_api))
+        SectionTitle(if (isGroq) "Groq API Keys · สูงสุด 5 รายการ" else stringResource(R.string.settings_api))
         SectionCard {
             Column(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
@@ -262,6 +261,45 @@ fun SettingsScreen(
                             hasFail && !hasOk -> Booth.Danger
                             else -> MiuixTheme.colorScheme.onSurface.copy(alpha = 0.85f)
                         },
+                    )
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------- Provider fallback
+        if (isGroq) {
+            SectionTitle("Gemini สำรองอัตโนมัติ")
+            SectionCard {
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Hint("เมื่อ Groq ใช้งานไม่ได้ ระบบจะใช้ Gemini รับช่วงแปลชั่วคราว ควรเพิ่ม Gemini API Key อย่างน้อยหนึ่งรายการ")
+                    GeminiKeyFields(
+                        apiKeyFields = apiKeyFields,
+                        reveal = revealKey,
+                        viewModel = viewModel,
+                        fieldColors = fieldColors,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        TextButton(
+                            text = stringResource(if (revealKey) R.string.settings_hide else R.string.settings_show),
+                            onClick = { revealKey = !revealKey },
+                        )
+                    }
+                    Button(
+                        onClick = { viewModel.saveApiKeys(); viewModel.clearTestResult() },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColorsPrimary(),
+                    ) {
+                        Text("บันทึก Gemini สำรอง", fontWeight = FontWeight.SemiBold)
+                    }
+                    StatusPill(
+                        label = if (hasGeminiKey) "มี Gemini สำรองพร้อมใช้" else "ยังไม่ได้ตั้งค่า Gemini สำรอง",
+                        tone = if (hasGeminiKey) StatusTone.Ok else StatusTone.Warn,
                     )
                 }
             }
@@ -443,11 +481,11 @@ fun SettingsScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = if (isGroq) "Gemini key สำรอง" else "Endpoint และ Model ID",
+                            text = "Custom Prompt และการตั้งค่าขั้นสูง",
                             fontWeight = FontWeight.Medium,
                         )
                         Text(
-                            text = if (isGroq) "ใช้สลับอัตโนมัติเมื่อ Groq เต็มโควตา" else "ปรับเฉพาะเมื่อจำเป็น",
+                            text = "คำสั่งแปลร่วมกันทุกโมเดล และตัวเลือกสำหรับผู้ใช้ขั้นสูง",
                             fontSize = 12.sp,
                             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         )
@@ -463,36 +501,7 @@ fun SettingsScreen(
                         modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 14.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        if (isGroq) {
-                            Hint(stringResource(R.string.settings_api_keys_hint))
-                            GeminiKeyFields(
-                                apiKeyFields = apiKeyFields,
-                                reveal = revealKey,
-                                viewModel = viewModel,
-                                fieldColors = fieldColors,
-                            )
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                            ) {
-                                TextButton(
-                                    text = stringResource(if (revealKey) R.string.settings_hide else R.string.settings_show),
-                                    onClick = { revealKey = !revealKey },
-                                )
-                                TextButton(
-                                    text = "บันทึกคีย์สำรอง",
-                                    onClick = {
-                                        viewModel.saveApiKeys()
-                                        viewModel.clearTestResult()
-                                        backupSaved = true
-                                    },
-                                )
-                            }
-                            if (backupSaved) {
-                                Text("✅ บันทึกคีย์สำรองแล้ว", fontSize = 13.sp, color = Booth.Success)
-                            }
-                        } else {
+                        if (!isGroq) {
                             OutlinedTextField(
                                 value = endpointField,
                                 onValueChange = { v ->
