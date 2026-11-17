@@ -122,13 +122,19 @@ class GroqTranslationClient {
         val system = TargetLanguageGuard.thaiOnlySystemPrompt(systemPrompt)
         val baseUser = userMessage(transcript, previousLines)
         val first = requestChat(apiKey, model, system, baseUser)
-        if (TargetLanguageGuard.accepts(first, "th")) return@withContext first
+        if (first.isNotBlank() && TargetLanguageGuard.accepts(first, "th")) return@withContext first
         // The model answered in another language. Retry once with an explicit reminder;
         // if it still is not Thai, return nothing rather than show a wrong-language subtitle.
         val retry = requestChat(
             apiKey, model, system,
             baseUser + "\n\nIMPORTANT: your previous answer was not Thai. Output ONLY the Thai (ภาษาไทย) translation.",
         )
+        // An empty answer for real speech is usually the model's content filter silently
+        // declining. Surface it as a refusal so the caller can retry the chunk on Gemini
+        // (safety filters off) instead of leaving a hole in the subtitles.
+        if (retry.isBlank() && transcript.trim().length >= 8) {
+            throw GroqRefusalException("Groq returned an empty translation for speech")
+        }
         if (TargetLanguageGuard.accepts(retry, "th")) retry else ""
     }
 

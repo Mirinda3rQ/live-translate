@@ -484,23 +484,17 @@ class SubtitleSessionService : Service() {
                                         var lastCredentialError: GroqCredentialException? = null
                                         for ((keyIndex, groqKey) in groqKeys.withIndex()) {
                                             try {
-                                                groqResult = if (useHybrid) {
-                                                    translateHybrid(
-                                                        pcm = pcm,
-                                                        groqKey = groqKey,
-                                                        geminiKey = geminiKey,
-                                                        speechModel = app.apiKeyStore.getGroqSpeechModel(),
-                                                        systemPrompt = currentSettings.effectiveCustomPrompt,
-                                                    )
-                                                } else {
-                                                    groqTranslationClient.translatePcmToThai(
-                                                        pcm16kMono = pcm,
-                                                        apiKey = groqKey,
-                                                        speechModel = app.apiKeyStore.getGroqSpeechModel(),
-                                                        chatModel = groqChatModel,
-                                                        systemPrompt = currentSettings.effectiveCustomPrompt,
-                                                    )
-                                                }
+                                                // Both modes share translateHybrid so every Groq chunk is
+                                                // translated with the last few source lines as context.
+                                                groqResult = translateHybrid(
+                                                    pcm = pcm,
+                                                    groqKey = groqKey,
+                                                    geminiKey = geminiKey,
+                                                    speechModel = app.apiKeyStore.getGroqSpeechModel(),
+                                                    systemPrompt = currentSettings.effectiveCustomPrompt,
+                                                    useGeminiText = useHybrid,
+                                                    groqChatModel = groqChatModel,
+                                                )
                                                 break
                                             } catch (e: GroqRateLimitException) {
                                                 // A 429 is a provider/project quota signal, not proof that this
@@ -664,11 +658,21 @@ class SubtitleSessionService : Service() {
         geminiKey: String,
         speechModel: String,
         systemPrompt: String,
+        useGeminiText: Boolean = true,
+        groqChatModel: String = GroqTranslationClient.DEFAULT_CHAT_MODEL,
     ): String {
         val transcript = groqTranslationClient.transcribePcm(pcm, groqKey, speechModel)
         if (transcript.isBlank()) return ""
         val context = recentTranscripts.toList()
-        val translated = try {
+        val translated = if (!useGeminiText) {
+            groqTranslationClient.translateTranscriptToThai(
+                transcript = transcript,
+                apiKey = groqKey,
+                chatModel = groqChatModel,
+                previousLines = context,
+                systemPrompt = systemPrompt,
+            )
+        } else try {
             flashTranslationClient.translateTranscriptToThai(transcript, context, geminiKey, systemPrompt)
         } catch (e: CancellationException) {
             throw e
