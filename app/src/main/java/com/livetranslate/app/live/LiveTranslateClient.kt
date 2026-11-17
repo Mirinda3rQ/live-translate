@@ -487,9 +487,9 @@ class LiveTranslateClient {
         val userPrompt = config.customPrompt.trim().ifBlank {
             com.livetranslate.app.data.UserSettings.Defaults.DEFAULT_SYSTEM_PROMPT
         }
-        // Provider failover must never silently fall back to the model's default
-        // language. Enforce the selected target language outside the editable prompt
-        // so even a custom prompt cannot accidentally make Gemini answer in English.
+        // Defensive only: gemini-3.5-live-translate-preview has been reported to
+        // accept setup.systemInstruction and silently ignore it. The target language
+        // is therefore enforced by translationConfig below, NOT by this prompt.
         val targetLanguage = targetLanguageName(config.targetLanguageCode)
         val prompt = """
             NON-NEGOTIABLE OUTPUT LANGUAGE:
@@ -503,11 +503,16 @@ class LiveTranslateClient {
             $userPrompt
         """.trimIndent()
 
-        // Gemini Live custom-instruction mode uses systemInstruction rather than
-        // translationConfig. Explicitly bind the selected target language in the
-        // highest-priority system instruction above.
+        // FIX: translationConfig is REQUIRED inside generationConfig. Without it the
+        // server defaults targetLanguageCode to "en", so Thai output drifts to other
+        // languages. Docs: ai.google.dev/gemini-api/docs/live-api/live-translate
+        val translationConfig = JSONObject()
+            .put("targetLanguageCode", config.targetLanguageCode.trim().ifBlank { "th" })
+            .put("echoTargetLanguage", config.echoTargetLanguage)
+
         val generationConfig = JSONObject()
             .put("responseModalities", JSONArray().put("AUDIO"))
+            .put("translationConfig", translationConfig)
 
         val resumption = config.resumptionHandle?.let { handle ->
             JSONObject().put("handle", handle)
