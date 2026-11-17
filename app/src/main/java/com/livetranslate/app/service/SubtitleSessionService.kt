@@ -355,6 +355,7 @@ class SubtitleSessionService : Service() {
                                 )
                             ) {
                                 Log.w(TAG, "Dropped off-target-language output: ${event.text.take(60)}")
+                                diag("drop", "live output not Thai: ${event.text.take(120)}")
                                 return@collect
                             }
                             appendTranscript(accumulatedOutput, event.text)
@@ -524,12 +525,14 @@ class SubtitleSessionService : Service() {
                                         // Groq refused this chunk: never show the refusal text.
                                         // Retry just this chunk on Gemini (BLOCK_NONE); otherwise skip it.
                                         Log.w(TAG, "Groq refused chunk; " + if (geminiKey.isNotBlank()) "using Gemini Flash" else "skipping")
+                                        diag("fallback", "groq refused/empty (${e.message}); gemini=" + geminiKey.isNotBlank())
                                         if (geminiKey.isBlank()) "" else translateWithGemini()
                                     } catch (e: GroqCredentialException) {
                                         if (geminiKey.isBlank()) throw e
                                         groqCooldownUntilMs = nowMs + 600_000L
                                         usingGeminiFallback = true
                                         Log.w(TAG, "All configured Groq keys were rejected; using Gemini Flash")
+                                        diag("fallback", "groq keys rejected: ${e.message}")
                                         SessionBus.setStatus(
                                             SessionBus.Status.Running,
                                             "Groq API Key ใช้งานไม่ได้ ใช้ Gemini สำรองชั่วคราว",
@@ -540,6 +543,7 @@ class SubtitleSessionService : Service() {
                                         groqCooldownUntilMs = nowMs + e.retryAfterMs
                                         usingGeminiFallback = true
                                         Log.w(TAG, "Groq rate limited; using Gemini Flash for ${e.retryAfterMs} ms")
+                                        diag("fallback", "groq rate limited ${e.retryAfterMs} ms: ${e.message}")
                                         SessionBus.setStatus(
                                             SessionBus.Status.Running,
                                             "Groq เต็มโควตา ใช้ Gemini แปลแทนชั่วคราว",
@@ -550,6 +554,7 @@ class SubtitleSessionService : Service() {
                                         groqCooldownUntilMs = nowMs + 15_000L
                                         usingGeminiFallback = true
                                         Log.w(TAG, "Groq server unavailable; using Gemini Flash for this chunk", e)
+                                        diag("fallback", "groq server error: ${e.message}")
                                         SessionBus.setStatus(
                                             SessionBus.Status.Running,
                                             "Groq ขัดข้องชั่วคราว กำลังใช้ Gemini สำรอง",
@@ -560,6 +565,7 @@ class SubtitleSessionService : Service() {
                                         groqCooldownUntilMs = nowMs + 15_000L
                                         usingGeminiFallback = true
                                         Log.w(TAG, "Groq network error; using Gemini Flash for this chunk", e)
+                                        diag("fallback", "groq network error: ${e.message}")
                                         SessionBus.setStatus(
                                             SessionBus.Status.Running,
                                             "เครือข่าย Groq มีปัญหา กำลังใช้ Gemini สำรอง",
@@ -582,6 +588,12 @@ class SubtitleSessionService : Service() {
                             val onTarget = com.livetranslate.app.live.TargetLanguageGuard
                                 .accepts(subtitle, "th")
                             if (!onTarget) Log.w(TAG, "Dropped non-Thai subtitle: ${subtitle.take(60)}")
+                            diag(
+                                "result",
+                                "provider=${currentSettings.translationProvider}" +
+                                    (if (usingGeminiFallback) "+gemini-fallback" else "") +
+                                    " shown=$onTarget th=\"${subtitle.take(120)}\"",
+                            )
                             if (!stopping && subtitle.isNotBlank() && onTarget) {
                                 appendTranscript(accumulatedOutput, subtitle)
                                 appendFull(fullOutput, subtitle)
@@ -592,6 +604,7 @@ class SubtitleSessionService : Service() {
                         } catch (t: Throwable) {
                             consecutiveTranslationFailures++
                             Log.e(TAG, "Audio translation failed (consecutive=$consecutiveTranslationFailures)", t)
+                            diag("error", "translation failed #$consecutiveTranslationFailures ${t.javaClass.simpleName}: ${t.message}")
                             // A failed request for one media chunk must not terminate
                             // the foreground session or dismiss the subtitle overlay.
                             // Keep capturing Media audio and retry on the next chunk.
@@ -608,7 +621,10 @@ class SubtitleSessionService : Service() {
         val onPcm: (ByteArray) -> Unit = { pcm ->
             // Cut at pauses in the speech rather than every fixed 3 s, so sentences are
             // not split mid-word before transcription.
-            speechChunker.offer(pcm, hasAudibleMediaAudio(pcm)).forEach { queue.trySend(it) }
+            speechChunker.offer(pcm, hasAudibleMediaAudio(pcm)).forEach {
+                diag("audio", "chunk ${it.size / 32} ms")
+                queue.trySend(it)
+            }
         }
         val onError: (String) -> Unit = { message -> scope.launch { stopEverything(message, error = true) } }
         try {
@@ -671,6 +687,7 @@ class SubtitleSessionService : Service() {
             throw e
         } catch (e: Exception) {
             Log.w(TAG, "Gemini text translation failed; falling back to Groq chat: ${e.message}")
+            diag("fallback", "gemini text failed, using groq chat: ${e.message}")
             groqTranslationClient.translateTranscriptToThai(
                 transcript = transcript,
                 apiKey = groqKey,
@@ -679,6 +696,8 @@ class SubtitleSessionService : Service() {
                 systemPrompt = systemPrompt,
             )
         }
+        diag("hybrid", "src=\"${transcript.take(120)}\" th=\"${translated.take(120)}\" via=" +
+            (if (useGeminiText) "gemini-text" else "groq-chat"))
         recentTranscripts.addLast(transcript)
         while (recentTranscripts.size > HYBRID_CONTEXT_LINES) recentTranscripts.removeFirst()
         // Show the source line too (visible when bilingual captions are on).
@@ -849,6 +868,7 @@ class SubtitleSessionService : Service() {
         reconnectAttempts++
         val attempt = reconnectAttempts
         Log.w(TAG, "reconnect #$attempt after: $reason")
+        diag("live", "reconnect #$attempt fresh=${handle == null} after: $reason")
         SessionBus.setStatus(
             SessionBus.Status.Starting,
             AppStrings.get(R.string.status_reconnecting, reason, attempt, MAX_RECONNECTS),
@@ -963,6 +983,9 @@ class SubtitleSessionService : Service() {
     }
 
     /** Reject near-silent PCM before any provider sees it; input is signed 16-bit mono PCM. */
+    private fun diag(tag: String, message: String) =
+        com.livetranslate.app.util.DiagnosticsLog.add(tag, message)
+
     private fun hasAudibleMediaAudio(pcm: ByteArray): Boolean {
         if (pcm.size < 2) return false
         var sumSquares = 0.0

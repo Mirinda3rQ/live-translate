@@ -589,14 +589,37 @@ fun SettingsScreen(
         SectionCard {
             val context = LocalContext.current
             val githubUrl = stringResource(R.string.github_url).trim()
+            val diagnosticsCopied = stringResource(R.string.settings_diagnostics_copied)
             Column(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
-                    text = stringResource(R.string.settings_version, BuildConfig.VERSION_NAME),
+                    text = stringResource(R.string.settings_version, BuildConfig.VERSION_NAME) +
+                        " (" + BuildConfig.GIT_SHA + ")",
                     fontSize = 13.sp,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+                TextButton(
+                    text = stringResource(R.string.settings_copy_diagnostics),
+                    onClick = {
+                        // Never includes API keys; only versions, chosen models and recent events.
+                        val header = buildString {
+                            appendLine("live-translate diagnostics")
+                            appendLine("version=${BuildConfig.VERSION_NAME} commit=${BuildConfig.GIT_SHA}")
+                            appendLine("android=${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT}) device=${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
+                            appendLine("provider=${settings.translationProvider} geminiModel=${settings.modelId} target=${settings.targetLanguageCode} audio=${settings.audioSourceMode}")
+                            appendLine("groqChatModel=$groqChatModel groqSpeechModel=$groqSpeechModel")
+                            appendLine("customPromptChars=${settings.customPrompt.length}")
+                        }
+                        val report = com.livetranslate.app.util.DiagnosticsLog.buildReport(header)
+                        runCatching {
+                            val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+                            clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("diagnostics", report))
+                            android.widget.Toast.makeText(context, diagnosticsCopied, android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
                 )
                 if (githubUrl.isNotBlank()) {
                     TextButton(
