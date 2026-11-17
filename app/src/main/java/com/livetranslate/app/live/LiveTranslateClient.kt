@@ -529,13 +529,18 @@ class LiveTranslateClient {
                 JSONObject().put("slidingWindow", JSONObject()),
             )
 
-        setup.put(
-            "systemInstruction",
-            JSONObject().put(
-                "parts",
-                JSONArray().put(JSONObject().put("text", prompt)),
-            ),
-        )
+        // Google's Live Translate docs list "no support for tools or instructions" for the
+        // dedicated translate models, so the target language comes only from
+        // translationConfig. Send the system instruction only to general-purpose Live models.
+        if (!model.contains("live-translate", ignoreCase = true)) {
+            setup.put(
+                "systemInstruction",
+                JSONObject().put(
+                    "parts",
+                    JSONArray().put(JSONObject().put("text", prompt)),
+                ),
+            )
+        }
 
         return JSONObject().put("setup", setup).toString()
     }

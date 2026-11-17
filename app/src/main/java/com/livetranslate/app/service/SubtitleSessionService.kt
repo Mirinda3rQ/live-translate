@@ -348,6 +348,14 @@ class SubtitleSessionService : Service() {
                             }
                         }
                         is LiveTranslateClient.LiveEvent.OutputTranscript -> {
+                            if (!com.livetranslate.app.live.TargetLanguageGuard.accepts(
+                                    event.text,
+                                    currentSettings.targetLanguageCode,
+                                )
+                            ) {
+                                Log.w(TAG, "Dropped off-target-language output: ${event.text.take(60)}")
+                                return@collect
+                            }
                             appendTranscript(accumulatedOutput, event.text)
                             appendFull(fullOutput, event.text)
                             publishCaptionUpdate(inputChanged = false, outputChanged = true)
