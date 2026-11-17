@@ -6,6 +6,7 @@ package com.livetranslate.app.data
  * Live API auto-detects source language; the optional text test mode can pin its on-device ASR locale.
  */
 data class UserSettings(
+    val translationProvider: TranslationProvider = TranslationProvider.GEMINI,
     val endpoint: String = Defaults.ENDPOINT,
     val modelId: String = Defaults.MODEL_ID,
     val targetLanguageCode: String = Defaults.TARGET_LANGUAGE,
@@ -24,11 +25,15 @@ data class UserSettings(
     val geminiFlashSystemInstructions: String = Defaults.GEMINI_FLASH_SYSTEM_INSTRUCTIONS,
     val customPrompt: String = Defaults.CUSTOM_PROMPT,
 ) {
+    /** The single prompt shared by Gemini Live, Gemini Flash, and Groq. */
+    val effectiveCustomPrompt: String
+        get() = customPrompt.trim().ifBlank { Defaults.DEFAULT_SYSTEM_PROMPT }
+
     object Defaults {
         const val ENDPOINT =
             "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
         const val MODEL_ID = "gemini-3.5-live-translate-preview"
-        const val TARGET_LANGUAGE = "zh-Hans"
+        const val TARGET_LANGUAGE = "th"
         const val FONT_SIZE_SP = 18f
         const val BACKGROUND_ALPHA = 0.65f
         const val BILINGUAL = false
@@ -37,8 +42,9 @@ data class UserSettings(
         const val GEMINI_FLASH_SOURCE_LANGUAGE = "ja-JP"
         const val GEMINI_FLASH_SOURCE_LANGUAGE_JAPANESE = "ja-JP"
         const val GEMINI_FLASH_SOURCE_LANGUAGE_CHINESE = "zh-CN"
-        const val GEMINI_FLASH_SYSTEM_INSTRUCTIONS =
-            "Translate the selected source-language speech into natural, faithful Thai subtitles. Preserve the original meaning, names, numbers, and tone. Keep the translation concise. Return only the Thai translation, with no explanations or quotation marks."
+        const val DEFAULT_SYSTEM_PROMPT = "Translate spoken content from ANY source language into natural, accurate Thai subtitles. Detect the source language automatically; never assume it is Japanese or English. The output MUST be Thai only. Preserve the complete meaning, context, speaker intent, emotion, names, numbers, slang, profanity, vulgar expressions, and explicit adult (18+) meaning. Use natural conversational Thai and match the original tone and level of formality. Do not censor, soften, omit, summarize, euphemize, mask words with asterisks, or invent dialogue. Do not add greetings, polite endings, explanations, warnings, or commentary that are not present in the source. If speech is unclear, do not guess missing words. Return only the Thai translation."
+        // Legacy key retained for compatibility; all providers use effectiveCustomPrompt.
+        const val GEMINI_FLASH_SYSTEM_INSTRUCTIONS = DEFAULT_SYSTEM_PROMPT
         const val TRANSLATED_VOLUME = 0.8f
         const val OVERLAY_X = 24
         const val OVERLAY_Y = -1

@@ -60,6 +60,7 @@ fun SubtitleScreen(
     onAudioSource: (AudioSourceMode) -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
+    onRestart: () -> Unit,
     onExport: () -> Unit,
     canDrawOverlays: Boolean,
 ) {
@@ -141,24 +142,39 @@ fun SubtitleScreen(
                     )
                 }
 
-                Button(
-                    onClick = { if (running) onStop() else onStart() },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp),
-                    colors = if (running) {
-                        ButtonDefaults.buttonColors()
-                    } else {
-                        ButtonDefaults.buttonColorsPrimary()
-                    },
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = stringResource(
-                            if (running) R.string.subtitle_stop else R.string.subtitle_start,
-                        ),
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 16.sp,
-                    )
+                    Button(
+                        onClick = { if (running) onStop() else onStart() },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(50.dp),
+                        colors = if (running) {
+                            ButtonDefaults.buttonColors()
+                        } else {
+                            ButtonDefaults.buttonColorsPrimary()
+                        },
+                    ) {
+                        Text(
+                            text = stringResource(
+                                if (running) R.string.subtitle_stop else R.string.subtitle_start,
+                            ),
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 15.sp,
+                        )
+                    }
+                    Button(
+                        onClick = onRestart,
+                        modifier = Modifier.height(50.dp),
+                        colors = ButtonDefaults.buttonColors(),
+                        enabled = session.status != SessionBus.Status.Idle &&
+                            session.status != SessionBus.Status.Stopped,
+                    ) {
+                        Text("↻ เริ่มใหม่", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    }
                 }
 
                 if (!canDrawOverlays) {
@@ -168,6 +184,43 @@ fun SubtitleScreen(
                         fontSize = 12.sp,
                     )
                 }
+            }
+        }
+
+        SectionCard {
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "AI ENGINE",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (settings.translationProvider.name == "GROQ") "Groq" else "Gemini Live",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = "Provider ที่เลือกไว้ในการตั้งค่า",
+                            fontSize = 12.sp,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        )
+                    }
+                    StatusPill(
+                        label = if (running) "กำลังทำงาน" else "พร้อมเริ่ม",
+                        tone = if (running) StatusTone.Ok else StatusTone.Idle,
+                    )
+                }
+                Text(
+                    text = "ถอดเสียงและแปลเป็นภาษาไทย · ตรวจจับภาษาต้นฉบับอัตโนมัติ",
+                    fontSize = 12.sp,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
             }
         }
 
@@ -212,30 +265,31 @@ fun SubtitleScreen(
                 }
             }
 
-            SmallTitle(
-                text = stringResource(R.string.subtitle_audio_source),
-                modifier = Modifier.padding(horizontal = 24.dp),
-            )
             SectionCard {
-                Column(modifier = Modifier.padding(vertical = 6.dp)) {
-                    AudioSourceRow(
-                        label = stringResource(R.string.audio_source_media),
-                        selected = settings.audioSourceMode == AudioSourceMode.MEDIA,
-                        enabled = !running,
-                        onClick = { onAudioSource(AudioSourceMode.MEDIA) },
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "แหล่งเสียง",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     )
-                    AudioSourceRow(
-                        label = stringResource(R.string.audio_source_mic),
-                        selected = settings.audioSourceMode == AudioSourceMode.MIC,
-                        enabled = !running,
-                        onClick = { onAudioSource(AudioSourceMode.MIC) },
-                    )
-                    AudioSourceRow(
-                        label = stringResource(R.string.audio_source_both),
-                        selected = settings.audioSourceMode == AudioSourceMode.MEDIA_AND_MIC,
-                        enabled = !running,
-                        onClick = { onAudioSource(AudioSourceMode.MEDIA_AND_MIC) },
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("◉", color = Booth.Accent, fontSize = 18.sp)
+                        Column(
+                            modifier = Modifier.padding(start = 10.dp).weight(1f),
+                        ) {
+                            Text("Media Only", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                            Text(
+                                "รับเสียงจากวิดีโอหรือสื่อที่เล่นบนอุปกรณ์เท่านั้น",
+                                fontSize = 12.sp,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            )
+                        }
+                        StatusPill(label = "เปิดใช้งาน", tone = StatusTone.Ok)
+                    }
                 }
             }
         }

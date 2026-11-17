@@ -95,6 +95,8 @@
     <string name="settings_permissions_hint">启动字幕时会请求系统录屏授权，用于捕获其它 App 的播放声音。</string>
     <string name="settings_about">关于</string>
     <string name="settings_version">版本 %1$s</string>
+    <string name="settings_copy_diagnostics">复制诊断信息</string>
+    <string name="settings_diagnostics_copied">已复制诊断信息</string>
     <string name="settings_github">GitHub</string>
     <string name="settings_github_pending">仓库链接未配置</string>
     <string name="settings_github_open">打开项目仓库</string>

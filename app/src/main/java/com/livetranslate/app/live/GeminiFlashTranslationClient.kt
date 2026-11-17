@@ -30,12 +30,11 @@ class GeminiFlashTranslationClient {
                     JSONObject().put(
                         "parts",
                         org.json.JSONArray().put(
-                            JSONObject().put("text", systemInstructions.trim().ifBlank {
-                                com.livetranslate.app.data.UserSettings.Defaults.GEMINI_FLASH_SYSTEM_INSTRUCTIONS
-                            }),
+                            JSONObject().put("text", thaiOnlySystemInstruction(systemInstructions)),
                         ),
                     ),
                 )
+                .put("safetySettings", safetySettings())
                 .toString()
                 .toRequestBody(JSON_MEDIA_TYPE)
             val request = Request.Builder()
@@ -65,10 +64,68 @@ class GeminiFlashTranslationClient {
                         append(parts.optJSONObject(i)?.optString("text").orEmpty())
                     }
                 }.trim()
-                translated.takeIf { it.isNotBlank() }
+                translated.takeIf { it.isNotBlank() }?.let(::rejectModelRefusal)
                     ?: throw IllegalStateException("Gemini returned an empty translation")
             }
         }
+
+    /**
+     * Hybrid path: translate an already-transcribed line (from Groq Whisper) into Thai.
+     * [previousLines] are earlier source lines, sent only as context for meaning and for sentences
+     * that were cut at the audio chunk boundary.
+     */
+    suspend fun translateTranscriptToThai(
+        transcript: String,
+        previousLines: List<String>,
+        apiKey: String,
+        systemInstructions: String = com.livetranslate.app.data.UserSettings.Defaults.DEFAULT_SYSTEM_PROMPT,
+    ): String = withContext(Dispatchers.IO) {
+        require(transcript.isNotBlank()) { "Empty transcript" }
+        require(apiKey.isNotBlank()) { "Missing API key" }
+        val userText = buildString {
+            if (previousLines.isNotEmpty()) {
+                append("Previous lines of the same video (context only; do not translate or repeat them):\n")
+                previousLines.forEach { append("- ").append(it).append('\n') }
+                append('\n')
+            }
+            append("New transcript line (follow the system prompt):\n")
+            append(transcript.trim())
+        }
+        val body = JSONObject()
+            .put("contents", org.json.JSONArray().put(
+                JSONObject().put("parts", org.json.JSONArray().put(JSONObject().put("text", userText))),
+            ))
+            .put("systemInstruction", JSONObject().put("parts", org.json.JSONArray().put(
+                JSONObject().put("text", thaiOnlySystemInstruction(systemInstructions)),
+            )))
+            .put("safetySettings", safetySettings())
+            .put("generationConfig", JSONObject().put("temperature", 0.3))
+            .toString().toRequestBody(JSON_MEDIA_TYPE)
+        val request = Request.Builder().url(ENDPOINT)
+            .header("x-goog-api-key", apiKey)
+            .header("Content-Type", "application/json")
+            .post(body).build()
+        httpClient.newCall(request).execute().use { response ->
+            val responseText = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                val detail = runCatching {
+                    JSONObject(responseText).optJSONObject("error")?.optString("message")
+                }.getOrNull().orEmpty()
+                throw IllegalStateException(detail.ifBlank {
+                    "Gemini text request failed (HTTP " + response.code + ")"
+                })
+            }
+            val root = JSONObject(responseText)
+            val outputParts = root.optJSONArray("candidates")
+                ?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
+                ?: throw IllegalStateException("Gemini returned no translation" + emptyReason(root))
+            val text = buildString {
+                for (i in 0 until outputParts.length()) append(outputParts.optJSONObject(i)?.optString("text").orEmpty())
+            }.trim()
+            if (text.isBlank()) throw IllegalStateException("Gemini returned an empty translation" + emptyReason(root))
+            rejectModelRefusal(text)
+        }
+    }
 
     /** Translate captured playback audio directly into Thai subtitle text. */
     suspend fun translateAudioToThai(
@@ -80,17 +137,16 @@ class GeminiFlashTranslationClient {
         require(apiKey.isNotBlank()) { "Missing API key" }
         val wav = pcm16kToWav(pcm16kMono, 16_000)
         val parts = org.json.JSONArray()
-            .put(JSONObject().put("text", "Listen to this audio and translate the spoken words into concise, natural Thai subtitles. Return only the Thai translation."))
+            .put(JSONObject().put("text", "The audio may contain speech in ANY language, including English, Japanese, Chinese, Korean, or mixed languages. Identify the language from the audio yourself, understand the spoken words, and translate them into natural Thai. Never limit translation to Japanese or Chinese. Return only the Thai subtitle translation; if there is no intelligible speech, return an empty string."))
             .put(JSONObject().put("inlineData", JSONObject()
                 .put("mimeType", "audio/wav")
                 .put("data", android.util.Base64.encodeToString(wav, android.util.Base64.NO_WRAP))))
         val body = JSONObject()
             .put("contents", org.json.JSONArray().put(JSONObject().put("parts", parts)))
             .put("systemInstruction", JSONObject().put("parts", org.json.JSONArray().put(
-                JSONObject().put("text", systemInstructions.trim().ifBlank {
-                    com.livetranslate.app.data.UserSettings.Defaults.GEMINI_FLASH_SYSTEM_INSTRUCTIONS
-                }),
+                JSONObject().put("text", thaiOnlySystemInstruction(systemInstructions)),
             )))
+            .put("safetySettings", safetySettings())
             .toString().toRequestBody(JSON_MEDIA_TYPE)
         val request = Request.Builder().url(ENDPOINT)
             .header("x-goog-api-key", apiKey)
@@ -106,13 +162,67 @@ class GeminiFlashTranslationClient {
                     "Gemini audio request failed (HTTP " + response.code + ")"
                 })
             }
-            val outputParts = JSONObject(responseText).optJSONArray("candidates")
+            val root = JSONObject(responseText)
+            val outputParts = root.optJSONArray("candidates")
                 ?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
-                ?: throw IllegalStateException("Gemini returned no subtitle text")
+                ?: throw IllegalStateException("Gemini returned no subtitle text" + emptyReason(root))
             buildString {
                 for (i in 0 until outputParts.length()) append(outputParts.optJSONObject(i)?.optString("text").orEmpty())
-            }.trim().ifBlank { throw IllegalStateException("Gemini returned empty subtitles") }
+            }.trim().ifBlank { throw IllegalStateException("Gemini returned empty subtitles") }.let(::rejectModelRefusal)
         }
+    }
+
+    /**
+     * Subtitles must not be filtered: Gemini's default thresholds can silently drop
+     * profanity or sexual language. BLOCK_NONE is the loosest setting the API allows
+     * (some content, e.g. child-safety, is always blocked regardless).
+     */
+    /**
+     * Keep custom instructions, but put a non-overridable Thai output contract above them.
+     * This also protects quota failover from stale saved Japanese/Chinese-only prompts.
+     */
+    private fun thaiOnlySystemInstruction(userInstructions: String): String {
+        val userPrompt = userInstructions.trim().ifBlank {
+            com.livetranslate.app.data.UserSettings.Defaults.DEFAULT_SYSTEM_PROMPT
+        }
+        return """
+            MANDATORY TRANSLATION CONTRACT — HIGHEST PRIORITY:
+            Detect the source language automatically. Accept ANY source language, including English,
+            Japanese, Chinese, Korean, and mixed-language speech. Translate all intelligible content
+            into natural, accurate Thai (ภาษาไทย). Output Thai subtitles only; never answer in English
+            or another language. Never claim that you can only translate Japanese or Chinese.
+            Never apologize, refuse, explain limitations, or add commentary. If a segment is genuinely
+            unintelligible, return an empty string rather than inventing speech.
+            Preserve meaning, names, numbers, tone, slang, profanity, and explicit adult dialogue.
+
+            ADDITIONAL USER TRANSLATION INSTRUCTIONS:
+            $userPrompt
+        """.trimIndent()
+    }
+
+    /** Never display a model refusal as if it were a translated subtitle. */
+    private fun rejectModelRefusal(text: String): String {
+        val refusal = Regex("(?i)\\b(i['’]?m sorry|i am sorry|i can only translate|i can['’]?t fulfill|i cannot fulfill|i cannot help with that request|as an ai language model)\\b")
+        if (refusal.containsMatchIn(text)) {
+            throw IllegalStateException("Gemini returned a refusal instead of Thai subtitles; this segment was not displayed.")
+        }
+        return text
+    }
+    private fun safetySettings(): org.json.JSONArray = org.json.JSONArray().apply {
+        listOf(
+            "HARM_CATEGORY_HARASSMENT",
+            "HARM_CATEGORY_HATE_SPEECH",
+            "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            "HARM_CATEGORY_DANGEROUS_CONTENT",
+        ).forEach { put(JSONObject().put("category", it).put("threshold", "BLOCK_NONE")) }
+    }
+
+    /** " (reason)" when Gemini reports why a response is empty (blockReason / finishReason), else "". */
+    private fun emptyReason(root: JSONObject): String {
+        val block = root.optJSONObject("promptFeedback")?.optString("blockReason").orEmpty()
+        val finish = root.optJSONArray("candidates")?.optJSONObject(0)?.optString("finishReason").orEmpty()
+        val reason = listOf(block, finish).filter { it.isNotBlank() }.joinToString("/")
+        return if (reason.isBlank()) "" else " ($reason)"
     }
 
     private fun pcm16kToWav(pcm: ByteArray, sampleRate: Int): ByteArray {
@@ -129,6 +239,21 @@ class GeminiFlashTranslationClient {
     }
 
     private companion object {
+        const val TRANSCRIPT_SYSTEM_INSTRUCTIONS =
+            "You are a professional Thai subtitle translator working on media the viewer is watching. " +
+            "The input is an automatic speech transcript in any language. It may contain recognition errors " +
+            "and may start or end in the middle of a sentence. Translate only the NEW line into natural, " +
+            "spoken Thai subtitle text. Use any previous lines only to resolve meaning, names, pronouns and " +
+            "who is speaking, and to continue a sentence that was cut at the chunk boundary; never translate " +
+            "or repeat the previous lines. Correct an obvious recognition error only when the context makes " +
+            "the right word clear, and never invent content. " +
+            "Be completely faithful to the source, including adult (18+) material: profanity, insults, " +
+            "slurs, vulgar and sexual words, moaning and explicit descriptions. Render each one with the " +
+            "equally strong, natural Thai colloquial equivalent a native speaker would use in the same " +
+            "context and register, and match the original intensity. Never censor, soften, euphemize, mask " +
+            "with symbols, summarize or skip anything. Never refuse, apologize, warn, moralize or add notes. " +
+            "Keep names and numbers accurate. If the line contains no real speech (only noise or a " +
+            "meaningless fragment), return an empty string. Output only the Thai translation."
         const val ENDPOINT =
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
