@@ -83,6 +83,7 @@ class SubtitleSessionService : Service() {
     private var flashAudioQueue: Channel<ByteArray>? = null
     private var flashAudioBuffer = ByteArrayOutputStream()
     private val flashAudioBufferLock = Any()
+    private val speechChunker = com.livetranslate.app.audio.SpeechChunker()
     private var flashSpeechRecognizer: SpeechRecognizer? = null
     private var reconnectAttempts = 0
     private val recognitionHandler = Handler(Looper.getMainLooper())
@@ -443,6 +444,7 @@ class SubtitleSessionService : Service() {
         val queue = Channel<ByteArray>(Channel.UNLIMITED)
         flashAudioQueue = queue
         synchronized(flashAudioBufferLock) { flashAudioBuffer = ByteArrayOutputStream() }
+        speechChunker.reset()
         flashTranslationJob = scope.launch {
             var consecutiveTranslationFailures = 0
             // Groq free tier hit its quota: until this time, translate with Gemini Flash
@@ -603,19 +605,10 @@ class SubtitleSessionService : Service() {
                 }
             }
         }
-        val onPcm: (ByteArray) -> Unit = onPcm@{ pcm ->
-            if (!hasAudibleMediaAudio(pcm)) return@onPcm
-            val chunks = mutableListOf<ByteArray>()
-            synchronized(flashAudioBufferLock) {
-                flashAudioBuffer.write(pcm)
-                while (flashAudioBuffer.size() >= FLASH_AUDIO_CHUNK_BYTES) {
-                    val all = flashAudioBuffer.toByteArray()
-                    chunks += all.copyOfRange(0, FLASH_AUDIO_CHUNK_BYTES)
-                    flashAudioBuffer.reset()
-                    flashAudioBuffer.write(all, FLASH_AUDIO_CHUNK_BYTES, all.size - FLASH_AUDIO_CHUNK_BYTES)
-                }
-            }
-            chunks.forEach { queue.trySend(it) }
+        val onPcm: (ByteArray) -> Unit = { pcm ->
+            // Cut at pauses in the speech rather than every fixed 3 s, so sentences are
+            // not split mid-word before transcription.
+            speechChunker.offer(pcm, hasAudibleMediaAudio(pcm)).forEach { queue.trySend(it) }
         }
         val onError: (String) -> Unit = { message -> scope.launch { stopEverything(message, error = true) } }
         try {
@@ -1110,6 +1103,7 @@ class SubtitleSessionService : Service() {
         pcmMixer?.close(); pcmMixer = null
         releaseJapaneseSpeechRecognition() // also closes flashAudioQueue and cancels flashTranslationJob
         synchronized(flashAudioBufferLock) { flashAudioBuffer = ByteArrayOutputStream() }
+        speechChunker.reset()
         reconnectJob?.cancel(); reconnectJob = null
         reconnectAttempts = 0
         captureStarted = false
@@ -1283,7 +1277,6 @@ class SubtitleSessionService : Service() {
         private const val RECONNECT_BASE_DELAY_MS = 1_500L
         private const val RECOGNITION_RESTART_DELAY_MS = 350L
         private const val HYBRID_CONTEXT_LINES = 3
-        private const val FLASH_AUDIO_CHUNK_BYTES = 96_000 // 3 seconds at 16 kHz, mono, 16-bit PCM
         private const val JAPANESE_LOCALE = "ja-JP"
         private const val CHINESE_LOCALE = "zh-CN"
         const val ACTION_START = "com.livetranslate.app.action.START_SUBTITLE"
