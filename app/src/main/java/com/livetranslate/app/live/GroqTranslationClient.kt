@@ -177,6 +177,7 @@ class GroqTranslationClient {
             }
             translated
         }
+    }
 
     private fun userMessage(transcript: String, previousLines: List<String>): String = buildString {
         if (previousLines.isNotEmpty()) {
