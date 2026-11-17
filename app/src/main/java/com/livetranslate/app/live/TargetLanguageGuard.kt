@@ -8,6 +8,16 @@ package com.livetranslate.app.live
 object TargetLanguageGuard {
     private const val LATIN_DRIFT_MIN_LETTERS = 8
 
+    private val PLACEHOLDER = Regex(
+        "[(\\[（【]\\s*(ไม่มีการแปล|ไม่มีเสียง|ไม่มีคำพูด|ไม่มีข้อความ|no translation|no speech|" +
+            "no audio|silence|inaudible|unintelligible)[^)\\]）】]{0,30}[)\\]）】]\\.?",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** Removes "(no translation)"-style placeholders a model wrote instead of a subtitle. */
+    fun stripPlaceholders(text: String): String =
+        PLACEHOLDER.replace(text, "").replace(Regex("[ \\t]{2,}"), " ").trim()
+
     fun accepts(text: String, targetLanguageCode: String): Boolean {
         val target = targetLanguageCode.trim().lowercase().substringBefore('-').substringBefore('_')
         if (target != "th") return true

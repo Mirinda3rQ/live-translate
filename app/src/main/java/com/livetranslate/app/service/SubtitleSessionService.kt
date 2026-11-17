@@ -579,9 +579,13 @@ class SubtitleSessionService : Service() {
                                 )
                             }
                             consecutiveTranslationFailures = 0
-                            if (!stopping && translated.isNotBlank()) {
-                                appendTranscript(accumulatedOutput, translated)
-                                appendFull(fullOutput, translated)
+                            // Models sometimes emit "(ไม่มีการแปล)" / "(No translation)" for
+                            // chunks with nothing to translate; never show that as a subtitle.
+                            val subtitle = com.livetranslate.app.live.TargetLanguageGuard
+                                .stripPlaceholders(translated)
+                            if (!stopping && subtitle.isNotBlank()) {
+                                appendTranscript(accumulatedOutput, subtitle)
+                                appendFull(fullOutput, subtitle)
                                 publishCaptionUpdate(inputChanged = false, outputChanged = true)
                             }
                         } catch (e: CancellationException) {
@@ -813,13 +817,17 @@ class SubtitleSessionService : Service() {
     private fun handleConnectionLoss(message: String) {
         if (stopping || restartInProgress) return
         val client = liveClient
-        if (client == null || client.lastResumptionHandle == null ||
+        // Close 1008 "session not found": the saved resumption handle is stale, so
+        // retrying with it can never succeed. Drop it and start a fresh session.
+        val staleSession = message.contains("session not found", ignoreCase = true)
+        if (staleSession) client?.clearResumptionHandle()
+        if (client == null || (client.lastResumptionHandle == null && !staleSession) ||
             reconnectAttempts >= MAX_RECONNECTS
         ) {
             stopEverything(message, error = true)
             return
         }
-        scheduleReconnect(message)
+        scheduleReconnect(message, allowFreshSession = staleSession)
     }
 
     /**
@@ -827,13 +835,14 @@ class SubtitleSessionService : Service() {
      * running — sendPcm16le silently drops frames until setupComplete, so no
      * special buffering is needed for a short reconnect window.
      */
-    private fun scheduleReconnect(reason: String) {
+    private fun scheduleReconnect(reason: String, allowFreshSession: Boolean = false) {
         if (stopping || restartInProgress) return
         // Failed state and Error event can both report the same loss —
         // dedupe while a reconnect is already scheduled.
         if (reconnectJob?.isActive == true) return
         val client = liveClient ?: return
-        val handle = client.lastResumptionHandle ?: run {
+        val handle = client.lastResumptionHandle
+        if (handle == null && !allowFreshSession) {
             stopEverything(reason, error = true)
             return
         }

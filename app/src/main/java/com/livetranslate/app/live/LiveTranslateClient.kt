@@ -84,6 +84,11 @@ class LiveTranslateClient {
     var lastResumptionHandle: String? = null
         private set
 
+    /** Forget a handle the server no longer knows (close 1008 "session not found"). */
+    fun clearResumptionHandle() {
+        lastResumptionHandle = null
+    }
+
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Idle)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
 
