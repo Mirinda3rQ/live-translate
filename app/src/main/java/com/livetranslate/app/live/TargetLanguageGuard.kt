@@ -14,6 +14,28 @@ object TargetLanguageGuard {
         RegexOption.IGNORE_CASE,
     )
 
+    /**
+     * Thai-only output contract placed above the user's (possibly stale) custom prompt, so a
+     * saved prompt such as "translate Japanese" cannot change the output language.
+     */
+    fun thaiOnlySystemPrompt(userInstructions: String): String {
+        val userPrompt = userInstructions.trim().ifBlank {
+            com.livetranslate.app.data.UserSettings.Defaults.DEFAULT_SYSTEM_PROMPT
+        }
+        return """
+            MANDATORY TRANSLATION CONTRACT — HIGHEST PRIORITY:
+            The text may be in ANY language, including English, Japanese, Chinese, Korean, or mixed
+            languages. Translate all intelligible content into natural, accurate Thai (ภาษาไทย).
+            Output Thai subtitles only; never answer in English or another language and never copy
+            the source text unchanged. Never apologize, refuse, explain limitations, or add commentary.
+            If the text is genuinely unintelligible, return an empty string.
+            Preserve meaning, names, numbers, tone, slang, profanity, and explicit adult dialogue.
+
+            ADDITIONAL USER TRANSLATION INSTRUCTIONS:
+            $userPrompt
+        """.trimIndent()
+    }
+
     /** Removes "(no translation)"-style placeholders a model wrote instead of a subtitle. */
     fun stripPlaceholders(text: String): String =
         PLACEHOLDER.replace(text, "").replace(Regex("[ \\t]{2,}"), " ").trim()

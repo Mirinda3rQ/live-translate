@@ -119,14 +119,25 @@ class GroqTranslationClient {
     ): String = withContext(Dispatchers.IO) {
         require(apiKey.isNotBlank()) { "Missing Groq API key" }
         val model = effectiveChatModel(chatModel)
-        val system = systemPrompt.trim().ifBlank {
-            com.livetranslate.app.data.UserSettings.Defaults.DEFAULT_SYSTEM_PROMPT
-        }
+        val system = TargetLanguageGuard.thaiOnlySystemPrompt(systemPrompt)
+        val baseUser = userMessage(transcript, previousLines)
+        val first = requestChat(apiKey, model, system, baseUser)
+        if (TargetLanguageGuard.accepts(first, "th")) return@withContext first
+        // The model answered in another language. Retry once with an explicit reminder;
+        // if it still is not Thai, return nothing rather than show a wrong-language subtitle.
+        val retry = requestChat(
+            apiKey, model, system,
+            baseUser + "\n\nIMPORTANT: your previous answer was not Thai. Output ONLY the Thai (ภาษาไทย) translation.",
+        )
+        if (TargetLanguageGuard.accepts(retry, "th")) retry else ""
+    }
+
+    private fun requestChat(apiKey: String, model: String, system: String, userText: String): String {
         val chatBody = JSONObject()
             .put("model", model)
             .put("messages", JSONArray()
                 .put(JSONObject().put("role", "system").put("content", system))
-                .put(JSONObject().put("role", "user").put("content", userMessage(transcript, previousLines))))
+                .put(JSONObject().put("role", "user").put("content", userText)))
             // Reasoning models (GPT-OSS) may spend part of the budget on reasoning, so they
             // get more room; other models only need the Thai subtitle itself. A smaller
             // reservation also keeps us further from the free tier's tokens-per-minute cap.
@@ -140,7 +151,7 @@ class GroqTranslationClient {
             .header("Content-Type", "application/json")
             .post(chatBody)
             .build()
-        httpClient.newCall(chatRequest).execute().use { response ->
+        return httpClient.newCall(chatRequest).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
                 val detail = runCatching {
@@ -166,7 +177,6 @@ class GroqTranslationClient {
             }
             translated
         }
-    }
 
     private fun userMessage(transcript: String, previousLines: List<String>): String = buildString {
         if (previousLines.isNotEmpty()) {

@@ -583,7 +583,10 @@ class SubtitleSessionService : Service() {
                             // chunks with nothing to translate; never show that as a subtitle.
                             val subtitle = com.livetranslate.app.live.TargetLanguageGuard
                                 .stripPlaceholders(translated)
-                            if (!stopping && subtitle.isNotBlank()) {
+                            val onTarget = com.livetranslate.app.live.TargetLanguageGuard
+                                .accepts(subtitle, "th")
+                            if (!onTarget) Log.w(TAG, "Dropped non-Thai subtitle: ${subtitle.take(60)}")
+                            if (!stopping && subtitle.isNotBlank() && onTarget) {
                                 appendTranscript(accumulatedOutput, subtitle)
                                 appendFull(fullOutput, subtitle)
                                 publishCaptionUpdate(inputChanged = false, outputChanged = true)
