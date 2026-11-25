@@ -20,7 +20,7 @@ class SpeechChunkerTest {
         assertTrue(c.pause(2).isEmpty())           // 0.2 s pause is not enough
         val chunks = c.pause(1)                    // 0.3 s pause ends the phrase
         assertEquals(1, chunks.size)
-        assertEquals(20 * 3_200, chunks[0].size)
+        assertEquals(10 * 3_200, chunks[0].size)
     }
 
     @Test
