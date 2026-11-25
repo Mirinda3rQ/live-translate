@@ -16,9 +16,9 @@ class SpeechChunkerTest {
     @Test
     fun cutsAtPauseAfterEnoughSpeech() {
         val c = SpeechChunker()
-        assertTrue(c.speak(20).isEmpty())          // 2 s of speech, no cut yet
-        assertTrue(c.pause(3).isEmpty())           // 0.3 s pause is not enough
-        val chunks = c.pause(1)                    // 0.4 s pause ends the phrase
+        assertTrue(c.speak(10).isEmpty())          // 1 s of speech, no cut yet
+        assertTrue(c.pause(2).isEmpty())           // 0.2 s pause is not enough
+        val chunks = c.pause(1)                    // 0.3 s pause ends the phrase
         assertEquals(1, chunks.size)
         assertEquals(20 * 3_200, chunks[0].size)
     }
@@ -26,9 +26,9 @@ class SpeechChunkerTest {
     @Test
     fun shortUtteranceWaitsForLongPause() {
         val c = SpeechChunker()
-        c.speak(8)                                 // 0.8 s
-        assertTrue(c.pause(9).isEmpty())
-        assertEquals(1, c.pause(1).size)           // 1.0 s of silence flushes it
+        c.speak(6)                                 // 0.6 s
+        assertTrue(c.pause(4).isEmpty())
+        assertEquals(1, c.pause(1).size)           // 0.5 s of silence flushes it
     }
 
     @Test
@@ -42,14 +42,15 @@ class SpeechChunkerTest {
     fun continuousSpeechIsCappedAtMax() {
         val c = SpeechChunker()
         val chunks = c.speak(50)                   // 5 s without a pause
-        assertEquals(1, chunks.size)
-        assertEquals(128_000, chunks[0].size)
+        assertEquals(2, chunks.size)
+        assertEquals(64_000, chunks[0].size)
+        assertEquals(64_000, chunks[1].size)
     }
 
     @Test
     fun resetDropsPendingAudio() {
         val c = SpeechChunker()
-        c.speak(20)
+        c.speak(10)
         c.reset()
         assertTrue(c.pause(10).isEmpty())
     }
