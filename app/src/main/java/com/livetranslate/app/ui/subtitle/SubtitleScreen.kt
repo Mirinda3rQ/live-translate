@@ -81,8 +81,8 @@ fun SubtitleScreen(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         PageTitle(
             title = stringResource(R.string.subtitle_title),
@@ -192,12 +192,24 @@ fun SubtitleScreen(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(
-                    text = "AI ENGINE",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = "AI ENGINE",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                    Text(
+                        text = if (running) "● LIVE" else "● STANDBY",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (running) Booth.Success else MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
@@ -228,7 +240,14 @@ fun SubtitleScreen(
                     )
                 }
                 Text(
-                    text = "ถอดเสียงและแปลเป็นภาษาไทย · ตรวจจับภาษาต้นฉบับอัตโนมัติ",
+                    text = when (settings.translationProvider) {
+                        com.livetranslate.app.data.TranslationProvider.GEMINI ->
+                            "Media audio  →  Gemini Live  →  Thai subtitles"
+                        com.livetranslate.app.data.TranslationProvider.GROQ ->
+                            "Media audio  →  Whisper  →  Groq Chat  →  Thai"
+                        com.livetranslate.app.data.TranslationProvider.GLM ->
+                            "Media audio  →  Whisper  →  GLM  →  Thai"
+                    },
                     fontSize = 12.sp,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 )
