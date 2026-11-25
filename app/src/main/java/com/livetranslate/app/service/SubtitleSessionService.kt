@@ -213,14 +213,27 @@ class SubtitleSessionService : Service() {
         data: Intent?,
     ) {
         currentSettings = app.settingsRepository.settings.first()
+        val selectedGroqChatModel = if (currentSettings.translationProvider == TranslationProvider.GROQ) {
+            app.apiKeyStore.getGroqChatModel()
+        } else {
+            ""
+        }
+        val needsGeminiTextKey = currentSettings.translationProvider == TranslationProvider.GROQ &&
+            selectedGroqChatModel == GroqTranslationClient.HYBRID_GEMINI_MODEL
         val hasProviderKey = when (currentSettings.translationProvider) {
-            TranslationProvider.GROQ -> app.apiKeyStore.getGroqApiKey().isNotBlank()
+            TranslationProvider.GROQ -> app.apiKeyStore.getGroqApiKey().isNotBlank() &&
+                (!needsGeminiTextKey || app.apiKeyStore.hasApiKey())
             TranslationProvider.GLM -> app.apiKeyStore.getGroqApiKey().isNotBlank() &&
                 app.apiKeyStore.hasGlmApiKey()
             TranslationProvider.GEMINI -> app.apiKeyStore.hasApiKey()
         }
         if (!hasProviderKey) {
-            SessionBus.setStatus(SessionBus.Status.Error, AppStrings.get(R.string.msg_need_api_key))
+            val message = if (needsGeminiTextKey && !app.apiKeyStore.hasApiKey()) {
+                "เลือก Gemini แปลจากข้อความอยู่ · กรุณาเพิ่ม Gemini API Key ก่อนเริ่มแปล"
+            } else {
+                AppStrings.get(R.string.msg_need_api_key)
+            }
+            SessionBus.setStatus(SessionBus.Status.Error, message)
             stopSelf()
             return
         }
@@ -484,8 +497,10 @@ class SubtitleSessionService : Service() {
                                 } else {
                                     try {
                                         val groqChatModel = app.apiKeyStore.getGroqChatModel()
-                                        val useHybrid = !useGlmText && groqChatModel == GroqTranslationClient.HYBRID_GEMINI_MODEL &&
-                                            geminiKey.isNotBlank()
+                                        // The selected hybrid model always means Groq Whisper -> Gemini Flash.
+                                        // Never silently downgrade to Groq Chat when its required Gemini key is absent.
+                                        val useHybrid = !useGlmText &&
+                                            groqChatModel == GroqTranslationClient.HYBRID_GEMINI_MODEL
                                         if (useHybrid && !hybridStatusShown) {
                                             hybridStatusShown = true
                                             SessionBus.setStatus(
@@ -687,6 +702,9 @@ class SubtitleSessionService : Service() {
         glmKey: String = "",
         groqChatModel: String = GroqTranslationClient.DEFAULT_CHAT_MODEL,
     ): String {
+        if (!useGlmText && useGeminiText && geminiKey.isBlank()) {
+            throw IllegalStateException("Gemini API Key is required for the selected Gemini hybrid translation model")
+        }
         val pipelineStartedAt = android.os.SystemClock.elapsedRealtime()
         val whisperStartedAt = pipelineStartedAt
         val transcript = groqTranslationClient.transcribePcm(pcm, groqKey, speechModel)
