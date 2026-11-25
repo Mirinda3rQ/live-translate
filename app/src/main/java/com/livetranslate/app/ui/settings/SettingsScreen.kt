@@ -316,7 +316,10 @@ fun SettingsScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Button(
-                        onClick = viewModel::testGlmConnection,
+                        onClick = {
+                            revealGlmKey = false
+                            viewModel.testGlmConnection()
+                        },
                         enabled = !testing && glmApiKey.isNotBlank(),
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColorsPrimary(),
