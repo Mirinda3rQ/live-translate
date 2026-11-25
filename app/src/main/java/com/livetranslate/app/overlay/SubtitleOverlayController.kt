@@ -148,15 +148,17 @@ class SubtitleOverlayController(
 
         val widthPx = clampWidth((initial.overlayWidthDp * density).roundToInt(), screenW)
         val heightPx = clampHeight((initial.overlayHeightDp * density).roundToInt(), screenH)
+        // Clamp restored coordinates before addView: persisted positions may
+        // come from a different orientation or display size.
         val x = if (initial.overlayX < 0) {
             ((screenW - widthPx) / 2).coerceAtLeast(0)
         } else {
-            initial.overlayX
+            safeCoerce(initial.overlayX, 0, max(0, screenW - widthPx))
         }
         val y = if (initial.overlayY < 0) {
             (screenH * 0.72f).roundToInt().let { safeCoerce(it, 0, max(0, screenH - heightPx)) }
         } else {
-            initial.overlayY
+            safeCoerce(initial.overlayY, 0, max(0, screenH - heightPx))
         }
 
         val params = WindowManager.LayoutParams(
@@ -169,9 +171,8 @@ class SubtitleOverlayController(
                 WindowManager.LayoutParams.TYPE_PHONE
             },
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                // Let the window reach every edge (status bar / nav bar areas).
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                // Keep the overlay in the display coordinate space. NO_LIMITS
+                // lets WindowManager draw beyond the screen even when x/y are clamped.
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT,
         ).apply {
