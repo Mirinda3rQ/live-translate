@@ -168,15 +168,22 @@ fun SettingsScreen(
                         viewModel.update { it.copy(translationProvider = TranslationProvider.GLM) }
                     }
                 }
+                val hybridGeminiSelected = settings.translationProvider == TranslationProvider.GROQ &&
+                    groqChatModel == "gemini-hybrid"
                 val ready = when (settings.translationProvider) {
                     TranslationProvider.GEMINI -> hasGeminiKey
-                    TranslationProvider.GROQ -> hasGroqKey
+                    TranslationProvider.GROQ -> hasGroqKey && (!hybridGeminiSelected || hasGeminiKey)
                     TranslationProvider.GLM -> hasGroqKey && hasGlmKey
                 }
                 StatusPill(
                     label = when (settings.translationProvider) {
                         TranslationProvider.GEMINI -> if (ready) "พร้อมใช้งาน · มี Gemini key แล้ว" else "ยังไม่ได้ใส่ Gemini API key"
-                        TranslationProvider.GROQ -> if (ready) "พร้อมใช้งาน · มี Groq key แล้ว" else "ยังไม่ได้ใส่ Groq API key"
+                        TranslationProvider.GROQ -> when {
+                            !hasGroqKey -> "ยังไม่ได้ใส่ Groq API key สำหรับ Whisper"
+                            hybridGeminiSelected && !hasGeminiKey -> "โหมด Gemini Hybrid ต้องเพิ่ม Gemini API Key"
+                            hybridGeminiSelected -> "พร้อมใช้งาน · Groq Whisper + Gemini Flash"
+                            else -> "พร้อมใช้งาน · Groq Whisper + Groq Chat"
+                        }
                         TranslationProvider.GLM -> when {
                             ready -> "พร้อมใช้งาน · มี Groq และ GLM keys แล้ว"
                             !hasGroqKey -> "ยังไม่ได้ใส่ Groq API key สำหรับ Whisper"
@@ -187,10 +194,12 @@ fun SettingsScreen(
                 )
                 if (settings.translationProvider == TranslationProvider.GROQ) {
                     Hint(
-                        if (hasGeminiKey) {
+                        if (hybridGeminiSelected) {
+                            "โหมดนี้ใช้ Groq Whisper ถอดเสียง แล้วส่งข้อความให้ Gemini Flash แปลเป็นไทยโดยตรง ต้องมีทั้ง Groq และ Gemini API Key"
+                        } else if (hasGeminiKey) {
                             "มี Gemini เป็นตัวสำรอง จะสลับให้อัตโนมัติเมื่อ Groq เต็มโควตา หรือโมเดลปฏิเสธเนื้อหา"
                         } else {
-                            "อยากให้มีตัวสำรองอัตโนมัติ ใส่ Gemini key ได้ที่หัวข้อ \"ขั้นสูง\" ด้านล่าง"
+                            "เพิ่ม Gemini API Key เพื่อเปิดใช้ Gemini เป็นตัวสำรองอัตโนมัติได้"
                         },
                     )
                 }
@@ -332,13 +341,19 @@ fun SettingsScreen(
 
         // ---------------------------------------------------------------- Provider fallback
         if (settings.translationProvider == TranslationProvider.GROQ) {
-            SectionTitle("Gemini สำรองอัตโนมัติ")
+            SectionTitle(if (hybridGeminiSelected) "Gemini Flash API Key · จำเป็นสำหรับโหมดที่เลือก" else "Gemini สำรองอัตโนมัติ")
             SectionCard {
                 Column(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Hint("เมื่อ Groq ใช้งานไม่ได้ ระบบจะใช้ Gemini รับช่วงแปลชั่วคราว ควรเพิ่ม Gemini API Key อย่างน้อยหนึ่งรายการ")
+                    Hint(
+                        if (hybridGeminiSelected) {
+                            "Gemini Flash เป็นโมเดลแปลหลัก: Groq Whisper → Gemini Flash ต้องบันทึก Gemini API Key ก่อนเริ่มแปล"
+                        } else {
+                            "เมื่อ Groq ใช้งานไม่ได้ ระบบจะใช้ Gemini รับช่วงแปลชั่วคราว ควรเพิ่ม Gemini API Key อย่างน้อยหนึ่งรายการ"
+                        },
+                    )
                     GeminiKeyFields(
                         apiKeyFields = apiKeyFields,
                         reveal = revealKey,
