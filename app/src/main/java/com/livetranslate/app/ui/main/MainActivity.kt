@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Subtitles
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -39,6 +40,7 @@ import com.livetranslate.app.LiveTranslateApp
 import com.livetranslate.app.R
 import com.livetranslate.app.data.AudioSourceMode
 import com.livetranslate.app.data.UserSettings
+import com.livetranslate.app.data.TranslationProvider
 import com.livetranslate.app.service.SessionBus
 import com.livetranslate.app.service.SubtitleSessionService
 import com.livetranslate.app.ui.settings.SettingsScreen
@@ -49,7 +51,9 @@ import com.livetranslate.app.ui.subtitle.SubtitleViewModel
 import com.livetranslate.app.ui.subtitle.SubtitleViewModelFactory
 import com.livetranslate.app.ui.theme.AppTheme
 import com.livetranslate.app.util.PermissionUtils
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import top.yukonga.miuix.kmp.basic.NavigationBar
 import top.yukonga.miuix.kmp.basic.NavigationBarDisplayMode
 import top.yukonga.miuix.kmp.basic.NavigationBarItem
@@ -57,6 +61,8 @@ import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 class MainActivity : ComponentActivity() {
+    private val settingsNavigationRequest = MutableStateFlow(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -65,7 +71,16 @@ class MainActivity : ComponentActivity() {
         setContent {
             AppTheme {
                 val scope = rememberCoroutineScope()
-                var tab by remember { mutableIntStateOf(0) }
+                var tab by remember {
+                    mutableIntStateOf(if (intent?.getBooleanExtra(EXTRA_OPEN_SETTINGS, false) == true) 1 else 0)
+                }
+                val openSettingsRequest by settingsNavigationRequest.collectAsStateWithLifecycle()
+                LaunchedEffect(openSettingsRequest) {
+                    if (openSettingsRequest) {
+                        tab = 1
+                        settingsNavigationRequest.value = false
+                    }
+                }
 
                 val subtitleVm: SubtitleViewModel = viewModel(
                     factory = SubtitleViewModelFactory(
@@ -140,7 +155,13 @@ class MainActivity : ComponentActivity() {
 
                 fun requestStartSubtitle() {
                     try {
-                        if (!app.apiKeyStore.hasApiKey()) {
+                        val hasProviderKey = when (settings.translationProvider) {
+                            TranslationProvider.GEMINI -> app.apiKeyStore.hasApiKey()
+                            TranslationProvider.GROQ -> app.apiKeyStore.getGroqApiKey().isNotBlank()
+                            TranslationProvider.GLM -> app.apiKeyStore.getGroqApiKey().isNotBlank() &&
+                                app.apiKeyStore.hasGlmApiKey()
+                        }
+                        if (!hasProviderKey) {
                             SessionBus.setStatus(
                                 SessionBus.Status.Error,
                                 getString(R.string.msg_need_api_key),
@@ -180,6 +201,15 @@ class MainActivity : ComponentActivity() {
                             SessionBus.Status.Error,
                             getString(R.string.msg_start_failed, t.message.orEmpty()),
                         )
+                    }
+                }
+
+                // Restart from the floating overlay returns here and starts
+                // the media-capture permission flow automatically (no manual Start tap).
+                LaunchedEffect(intent?.getBooleanExtra(EXTRA_AUTO_START, false)) {
+                    if (intent?.getBooleanExtra(EXTRA_AUTO_START, false) == true) {
+                        intent?.removeExtra(EXTRA_AUTO_START)
+                        requestStartSubtitle()
                     }
                 }
 
@@ -242,6 +272,18 @@ class MainActivity : ComponentActivity() {
                                         }
                                     }
                                 },
+                                onRestart = {
+                                    scope.launch {
+                                        // A fresh MediaProjection grant is requested by the same
+                                        // permission flow used by Start; no second tap is needed.
+                                        runCatching {
+                                            SessionBus.stop()
+                                            SubtitleSessionService.stop(this@MainActivity)
+                                        }
+                                        delay(500L)
+                                        requestStartSubtitle()
+                                    }
+                                },
                                 onExport = { subtitleVm.exportLastSession() },
                                 canDrawOverlays = PermissionUtils.canDrawOverlays(this@MainActivity),
                             )
@@ -258,6 +300,15 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_OPEN_SETTINGS, false)) {
+            settingsNavigationRequest.value = true
+            intent.removeExtra(EXTRA_OPEN_SETTINGS)
         }
     }
 
@@ -284,10 +335,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun effectiveAudioSource(settings: UserSettings): AudioSourceMode =
-        settings.audioSourceMode
+    // Live Caption is specifically for audio playing on this device, never microphone input.
+    private fun effectiveAudioSource(settings: UserSettings): AudioSourceMode = AudioSourceMode.MEDIA
 
     companion object {
         private const val TAG = "MainActivity"
+        const val EXTRA_OPEN_SETTINGS = "com.livetranslate.app.extra.OPEN_SETTINGS"
+        const val EXTRA_AUTO_START = "com.livetranslate.app.extra.AUTO_START"
     }
 }

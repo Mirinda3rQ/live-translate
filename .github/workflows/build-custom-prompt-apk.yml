@@ -2,6 +2,9 @@ name: Build Custom Prompt APK
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feature/groq-provider-settings-redesign
 
 permissions:
   contents: read
@@ -22,11 +25,13 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          accept-android-sdk-licenses: true
 
       - name: Install Android SDK packages
         run: |
-          yes | sdkmanager --licenses
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4

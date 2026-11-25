@@ -28,8 +28,14 @@ import com.livetranslate.app.audio.TranslatedAudioPlayer
 import com.livetranslate.app.data.AudioSourceMode
 import com.livetranslate.app.data.SupportedLanguages
 import com.livetranslate.app.data.UserSettings
+import com.livetranslate.app.data.TranslationProvider
 import com.livetranslate.app.live.LiveTranslateClient
 import com.livetranslate.app.live.GeminiFlashTranslationClient
+import com.livetranslate.app.live.GroqRateLimitException
+import com.livetranslate.app.live.GroqCredentialException
+import com.livetranslate.app.live.GroqRefusalException
+import com.livetranslate.app.live.GroqTranslationClient
+import com.livetranslate.app.live.GroqTransientException
 import java.io.ByteArrayOutputStream
 import com.livetranslate.app.overlay.SubtitleOverlayController
 import com.livetranslate.app.ui.main.MainActivity
@@ -77,13 +83,21 @@ class SubtitleSessionService : Service() {
     private var flashAudioQueue: Channel<ByteArray>? = null
     private var flashAudioBuffer = ByteArrayOutputStream()
     private val flashAudioBufferLock = Any()
+    private val speechChunker = com.livetranslate.app.audio.SpeechChunker()
     private var flashSpeechRecognizer: SpeechRecognizer? = null
     private var reconnectAttempts = 0
     private val recognitionHandler = Handler(Looper.getMainLooper())
     private val translationMutex = Mutex()
     private val flashTranslationClient = GeminiFlashTranslationClient()
+    private val groqTranslationClient = GroqTranslationClient()
+    private val glmCircuitBreaker = com.livetranslate.app.live.ProviderCircuitBreaker()
+    private val geminiCircuitBreaker = com.livetranslate.app.live.ProviderCircuitBreaker()
+    /** Last few source-language lines, sent to Gemini as translation context (hybrid mode). */
+    private val recentTranscripts = ArrayDeque<String>()
     private var recognitionIntent: Intent? = null
     private var recognitionRestartPending = false
+    /** True while restartTranslationInPlace() is rebuilding the pipeline; suppresses auto-reconnect/stop races. */
+    private var restartInProgress = false
 
     private var currentSettings: UserSettings = UserSettings()
     private var audioSourceMode: AudioSourceMode = AudioSourceMode.MEDIA
@@ -121,7 +135,9 @@ class SubtitleSessionService : Service() {
             }
             ACTION_START -> {
                 val modeName = intent.getStringExtra(EXTRA_AUDIO_SOURCE)
-                audioSourceMode = AudioSourceMode.fromStorage(modeName)
+                // This app session is intended for live captions from on-device media playback.
+                // Never route session audio from the microphone, regardless of provider or stale settings.
+                audioSourceMode = AudioSourceMode.MEDIA
                 val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
                 val data = if (Build.VERSION.SDK_INT >= 33) {
                     intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
@@ -162,6 +178,7 @@ class SubtitleSessionService : Service() {
         reconnectAttempts = 0
         SessionBus.setStatus(SessionBus.Status.Starting, AppStrings.get(R.string.status_starting))
         SessionBus.clearExport()
+        recentTranscripts.clear()
         accumulatedInput.clear()
         accumulatedOutput.clear()
         fullInput.clear()
@@ -176,12 +193,6 @@ class SubtitleSessionService : Service() {
         startAsForeground()
 
         val app = application as LiveTranslateApp
-        if (!app.apiKeyStore.hasApiKey()) {
-            SessionBus.setStatus(SessionBus.Status.Error, AppStrings.get(R.string.msg_need_api_key))
-            stopSelf()
-            return
-        }
-
         sessionJob = scope.launch {
             try {
                 startSessionInternal(app, resultCode, data)
@@ -202,6 +213,30 @@ class SubtitleSessionService : Service() {
         data: Intent?,
     ) {
         currentSettings = app.settingsRepository.settings.first()
+        val selectedGroqChatModel = if (currentSettings.translationProvider == TranslationProvider.GROQ) {
+            app.apiKeyStore.getGroqChatModel()
+        } else {
+            ""
+        }
+        val needsGeminiTextKey = currentSettings.translationProvider == TranslationProvider.GROQ &&
+            selectedGroqChatModel == GroqTranslationClient.HYBRID_GEMINI_MODEL
+        val hasProviderKey = when (currentSettings.translationProvider) {
+            TranslationProvider.GROQ -> app.apiKeyStore.getGroqApiKey().isNotBlank() &&
+                (!needsGeminiTextKey || app.apiKeyStore.hasApiKey())
+            TranslationProvider.GLM -> app.apiKeyStore.getGroqApiKey().isNotBlank() &&
+                app.apiKeyStore.hasGlmApiKey()
+            TranslationProvider.GEMINI -> app.apiKeyStore.hasApiKey()
+        }
+        if (!hasProviderKey) {
+            val message = if (needsGeminiTextKey && !app.apiKeyStore.hasApiKey()) {
+                "เลือก Gemini แปลจากข้อความอยู่ · กรุณาเพิ่ม Gemini API Key ก่อนเริ่มแปล"
+            } else {
+                AppStrings.get(R.string.msg_need_api_key)
+            }
+            SessionBus.setStatus(SessionBus.Status.Error, message)
+            stopSelf()
+            return
+        }
         currentCoroutineContext().ensureActive()
         // audioSourceMode already set from Intent EXTRA in onStartCommand.
 
@@ -235,7 +270,31 @@ class SubtitleSessionService : Service() {
                 },
                 // The overlay is the caption surface; closing it ends the session
                 // (transcripts are still kept for export via markSessionFinished).
+                onSettingsChanged = { transform ->
+                    val updated = transform(currentSettings)
+                    currentSettings = updated
+                    overlay?.updateSettings(updated)
+                    ioScope.launch {
+                        runCatching {
+                            app.settingsRepository.update { updated }
+                        }.onFailure {
+                            Log.e(TAG, "Could not persist floating subtitle settings", it)
+                        }
+                    }
+                    audioPlayer?.setVolume(updated.translatedVolume)
+                    applyTranslatedAudioEnabled()
+                },
                 onCloseRequested = { stopEverything(AppStrings.get(R.string.status_closed_by_user)) },
+                onSettingsRequested = {
+                    val settingsIntent = Intent(this@SubtitleSessionService, MainActivity::class.java).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                        putExtra(MainActivity.EXTRA_OPEN_SETTINGS, true)
+                    }
+                    runCatching { startActivity(settingsIntent) }
+                        .onFailure { Log.e(TAG, "Could not open app settings from overlay", it) }
+                },
+                onRestartRequested = { restartTranslationInPlace() },
+                onRestartAppRequested = { restartAppFromOverlay() },
             )
             overlay = overlayController
             overlayController.show(currentSettings)
@@ -243,7 +302,7 @@ class SubtitleSessionService : Service() {
             val client = LiveTranslateClient()
             liveClient = client
 
-            val player = if (currentSettings.geminiFlashTestMode) null else TranslatedAudioPlayer()
+            val player = if (currentSettings.translationProvider != TranslationProvider.GEMINI || currentSettings.geminiFlashTestMode) null else TranslatedAudioPlayer()
             audioPlayer = player
             applyTranslatedAudioEnabled()
             player?.setVolume(currentSettings.translatedVolume)
@@ -254,6 +313,7 @@ class SubtitleSessionService : Service() {
                         when (state) {
                             is LiveTranslateClient.ConnectionState.Ready -> {
                                 reconnectAttempts = 0
+                                restartInProgress = false
                                 SessionBus.setStatus(SessionBus.Status.Running, AppStrings.get(R.string.status_translating))
                                 startCapturePipeline(client)
                             }
@@ -280,6 +340,7 @@ class SubtitleSessionService : Service() {
                     when (event) {
                         is LiveTranslateClient.LiveEvent.SetupComplete -> {
                             reconnectAttempts = 0
+                            restartInProgress = false
                             SessionBus.setStatus(SessionBus.Status.Running, AppStrings.get(R.string.status_translating))
                             startCapturePipeline(client)
                         }
@@ -306,6 +367,15 @@ class SubtitleSessionService : Service() {
                             }
                         }
                         is LiveTranslateClient.LiveEvent.OutputTranscript -> {
+                            if (!com.livetranslate.app.live.TargetLanguageGuard.accepts(
+                                    event.text,
+                                    currentSettings.targetLanguageCode,
+                                )
+                            ) {
+                                Log.w(TAG, "Dropped off-target-language output: ${event.text.take(60)}")
+                                diag("drop", "live output not Thai: ${event.text.take(120)}")
+                                return@collect
+                            }
                             appendTranscript(accumulatedOutput, event.text)
                             appendFull(fullOutput, event.text)
                             publishCaptionUpdate(inputChanged = false, outputChanged = true)
@@ -348,19 +418,31 @@ class SubtitleSessionService : Service() {
 
             yield()
             currentCoroutineContext().ensureActive()
-            // Rotate keys: try first available via round-robin start index
-            val key = app.apiKeyStore.nextRotatedKey()
+            // Select credentials for the chosen provider.
+            val key = if (currentSettings.translationProvider != TranslationProvider.GEMINI) {
+                app.apiKeyStore.getGroqApiKey()
+            } else app.apiKeyStore.nextRotatedKey()
             if (key.isBlank()) {
                 SessionBus.setStatus(SessionBus.Status.Error, AppStrings.get(R.string.msg_need_api_key))
                 stopEverything(AppStrings.get(R.string.msg_need_api_key), error = true)
                 return
             }
-            if (currentSettings.geminiFlashTestMode) {
+            if (currentSettings.translationProvider != TranslationProvider.GEMINI) {
                 startFlashAudioCapture(key)
                 SessionBus.setStatus(
                     SessionBus.Status.Running,
-                    getString(R.string.gemini_flash_test_running),
+                    if (currentSettings.translationProvider == TranslationProvider.GLM)
+                        "Groq Whisper กำลังถอดเสียง · GLM กำลังแปลเป็นไทย"
+                    else "Groq กำลังแปลเสียงเป็นภาษาไทย",
                 )
+                return
+            }
+            if (currentSettings.geminiFlashTestMode) {
+                startFlashAudioCapture(key)
+                SessionBus.setStatus(
+                SessionBus.Status.Running,
+                if (currentSettings.translationProvider == TranslationProvider.GROQ) "Groq กำลังแปลเสียงเป็นภาษาไทย" else getString(R.string.gemini_flash_test_running),
+            )
                 return
             }
             client.connect(
@@ -382,48 +464,196 @@ class SubtitleSessionService : Service() {
 
     /** Gemini Flash consumes PCM from the selected capture source, including system Media. */
     private fun startFlashAudioCapture(apiKey: String) {
+        val app = application as LiveTranslateApp
         val queue = Channel<ByteArray>(Channel.UNLIMITED)
         flashAudioQueue = queue
         synchronized(flashAudioBufferLock) { flashAudioBuffer = ByteArrayOutputStream() }
+        speechChunker.reset()
         flashTranslationJob = scope.launch {
+            var consecutiveTranslationFailures = 0
+            // Groq free tier hit its quota: until this time, translate with Gemini Flash
+            // (only if the user saved a Gemini key). Elapsed-realtime so clock changes don't matter.
+            var groqCooldownUntilMs = 0L
+            var usingGeminiFallback = false
+            var hybridStatusShown = false
             for (pcm in queue) {
                 translationMutex.withLock {
                     if (!stopping) {
                         try {
-                            val translated = flashTranslationClient.translateAudioToThai(
-                                pcm16kMono = pcm,
-                                systemInstructions = currentSettings.geminiFlashSystemInstructions,
-                                apiKey = apiKey,
+                            val translated = if (currentSettings.translationProvider != TranslationProvider.GEMINI) {
+                                val geminiKey = app.apiKeyStore.nextRotatedKey()
+                                val glmKey = app.apiKeyStore.getGlmApiKey()
+                                val useGlmText = currentSettings.translationProvider == TranslationProvider.GLM
+                                val nowMs = android.os.SystemClock.elapsedRealtime()
+                                val translateWithGemini = suspend {
+                                    flashTranslationClient.translateAudioToThai(
+                                        pcm16kMono = pcm,
+                                        systemInstructions = currentSettings.effectiveCustomPrompt,
+                                        apiKey = geminiKey,
+                                    )
+                                }
+                                if (!useGlmText && geminiKey.isNotBlank() && nowMs < groqCooldownUntilMs) {
+                                    translateWithGemini()
+                                } else {
+                                    try {
+                                        val groqChatModel = app.apiKeyStore.getGroqChatModel()
+                                        // The selected hybrid model always means Groq Whisper -> Gemini Flash.
+                                        // Never silently downgrade to Groq Chat when its required Gemini key is absent.
+                                        val useHybrid = !useGlmText &&
+                                            groqChatModel == GroqTranslationClient.HYBRID_GEMINI_MODEL
+                                        if (useHybrid && !hybridStatusShown) {
+                                            hybridStatusShown = true
+                                            SessionBus.setStatus(
+                                                SessionBus.Status.Running,
+                                                "Groq ถอดเสียง + Gemini แปลเป็นไทย",
+                                            )
+                                        }
+                                        val groqKeys = app.apiKeyStore.nextGroqApiKeys().ifEmpty { listOf(apiKey) }
+                                        var groqResult: String? = null
+                                        var lastRateLimit: GroqRateLimitException? = null
+                                        var lastCredentialError: GroqCredentialException? = null
+                                        for ((keyIndex, groqKey) in groqKeys.withIndex()) {
+                                            try {
+                                                // Both modes share translateHybrid so every Groq chunk is
+                                                // translated with the last few source lines as context.
+                                                groqResult = translateHybrid(
+                                                    pcm = pcm,
+                                                    groqKey = groqKey,
+                                                    geminiKey = geminiKey,
+                                                    speechModel = app.apiKeyStore.getGroqSpeechModel(),
+                                                    systemPrompt = currentSettings.effectiveCustomPrompt,
+                                                    useGeminiText = useHybrid,
+                                                    useGlmText = useGlmText,
+                                                    glmKey = glmKey,
+                                                    groqChatModel = groqChatModel,
+                                                )
+                                                break
+                                            } catch (e: GroqRateLimitException) {
+                                                // A 429 is a provider/project quota signal, not proof that this
+                                                // individual key is bad. Do not rotate keys to evade shared limits.
+                                                throw e
+                                            } catch (e: GroqCredentialException) {
+                                                lastCredentialError = e
+                                                Log.w(TAG, "Groq key ${keyIndex + 1}/${groqKeys.size} rejected")
+                                                if (keyIndex == groqKeys.lastIndex) throw e
+                                            }
+                                        }
+                                        (groqResult
+                                            ?: lastRateLimit?.let { throw it }
+                                            ?: lastCredentialError?.let { throw it }
+                                            ?: "").also {
+                                            if (usingGeminiFallback) {
+                                                usingGeminiFallback = false
+                                                SessionBus.setStatus(
+                                                    SessionBus.Status.Running,
+                                                    "Groq กำลังแปลเสียงเป็นภาษาไทย",
+                                                )
+                                            }
+                                        }
+                                    } catch (e: GroqRefusalException) {
+                                        // Groq refused this chunk: never show the refusal text.
+                                        // Retry just this chunk on Gemini (BLOCK_NONE); otherwise skip it.
+                                        Log.w(TAG, "Groq refused chunk; " + if (geminiKey.isNotBlank()) "using Gemini Flash" else "skipping")
+                                        diag("fallback", "groq refused/empty (${e.message}); gemini=" + geminiKey.isNotBlank())
+                                        if (geminiKey.isBlank()) "" else translateWithGemini()
+                                    } catch (e: GroqCredentialException) {
+                                        if (geminiKey.isBlank()) throw e
+                                        groqCooldownUntilMs = nowMs + 600_000L
+                                        usingGeminiFallback = true
+                                        Log.w(TAG, "All configured Groq keys were rejected; using Gemini Flash")
+                                        diag("fallback", "groq keys rejected: ${e.message}")
+                                        SessionBus.setStatus(
+                                            SessionBus.Status.Running,
+                                            "Groq API Key ใช้งานไม่ได้ ใช้ Gemini สำรองชั่วคราว",
+                                        )
+                                        translateWithGemini()
+                                    } catch (e: GroqRateLimitException) {
+                                        if (geminiKey.isBlank()) throw e
+                                        groqCooldownUntilMs = nowMs + e.retryAfterMs
+                                        usingGeminiFallback = true
+                                        Log.w(TAG, "Groq rate limited; using Gemini Flash for ${e.retryAfterMs} ms")
+                                        diag("fallback", "groq rate limited ${e.retryAfterMs} ms: ${e.message}")
+                                        SessionBus.setStatus(
+                                            SessionBus.Status.Running,
+                                            "Groq เต็มโควตา ใช้ Gemini แปลแทนชั่วคราว",
+                                        )
+                                        translateWithGemini()
+                                    } catch (e: GroqTransientException) {
+                                        if (geminiKey.isBlank()) throw e
+                                        groqCooldownUntilMs = nowMs + 15_000L
+                                        usingGeminiFallback = true
+                                        Log.w(TAG, "Groq server unavailable; using Gemini Flash for this chunk", e)
+                                        diag("fallback", "groq server error: ${e.message}")
+                                        SessionBus.setStatus(
+                                            SessionBus.Status.Running,
+                                            "Groq ขัดข้องชั่วคราว กำลังใช้ Gemini สำรอง",
+                                        )
+                                        translateWithGemini()
+                                    } catch (e: java.io.IOException) {
+                                        if (geminiKey.isBlank()) throw e
+                                        groqCooldownUntilMs = nowMs + 15_000L
+                                        usingGeminiFallback = true
+                                        Log.w(TAG, "Groq network error; using Gemini Flash for this chunk", e)
+                                        diag("fallback", "groq network error: ${e.message}")
+                                        SessionBus.setStatus(
+                                            SessionBus.Status.Running,
+                                            "เครือข่าย Groq มีปัญหา กำลังใช้ Gemini สำรอง",
+                                        )
+                                        translateWithGemini()
+                                    }
+                                }
+                            } else {
+                                flashTranslationClient.translateAudioToThai(
+                                    pcm16kMono = pcm,
+                                    systemInstructions = currentSettings.effectiveCustomPrompt,
+                                    apiKey = apiKey,
+                                )
+                            }
+                            consecutiveTranslationFailures = 0
+                            // Models sometimes emit "(ไม่มีการแปล)" / "(No translation)" for
+                            // chunks with nothing to translate; never show that as a subtitle.
+                            val subtitle = com.livetranslate.app.live.TargetLanguageGuard
+                                .stripPlaceholders(translated)
+                            val onTarget = com.livetranslate.app.live.TargetLanguageGuard
+                                .accepts(subtitle, "th")
+                            if (!onTarget) Log.w(TAG, "Dropped non-Thai subtitle: ${subtitle.take(60)}")
+                            diag(
+                                "result",
+                                "provider=${currentSettings.translationProvider}" +
+                                    (if (usingGeminiFallback) "+gemini-fallback" else "") +
+                                    " shown=$onTarget th=\"${subtitle.take(120)}\"",
                             )
-                            if (!stopping) {
-                                appendTranscript(accumulatedOutput, translated)
-                                appendFull(fullOutput, translated)
+                            if (!stopping && subtitle.isNotBlank() && onTarget) {
+                                appendTranscript(accumulatedOutput, subtitle)
+                                appendFull(fullOutput, subtitle)
                                 publishCaptionUpdate(inputChanged = false, outputChanged = true)
                             }
                         } catch (e: CancellationException) {
                             throw e
                         } catch (t: Throwable) {
-                            Log.e(TAG, "Gemini Flash audio translation failed", t)
-                            val message = getString(R.string.gemini_flash_translation_failed, t.message.orEmpty())
-                            stopEverything(message, error = true)
-                            break
+                            consecutiveTranslationFailures++
+                            Log.e(TAG, "Audio translation failed (consecutive=$consecutiveTranslationFailures)", t)
+                            diag("error", "translation failed #$consecutiveTranslationFailures ${t.javaClass.simpleName}: ${t.message}")
+                            // A failed request for one media chunk must not terminate
+                            // the foreground session or dismiss the subtitle overlay.
+                            // Keep capturing Media audio and retry on the next chunk.
+                            SessionBus.setStatus(
+                                SessionBus.Status.Running,
+                                "แปลเสียงช่วงนี้ไม่สำเร็จ กำลังลองช่วงถัดไป (" + t.message.orEmpty() + ")",
+                            )
+                            delay(750L)
                         }
                     }
                 }
             }
         }
         val onPcm: (ByteArray) -> Unit = { pcm ->
-            val chunks = mutableListOf<ByteArray>()
-            synchronized(flashAudioBufferLock) {
-                flashAudioBuffer.write(pcm)
-                while (flashAudioBuffer.size() >= FLASH_AUDIO_CHUNK_BYTES) {
-                    val all = flashAudioBuffer.toByteArray()
-                    chunks += all.copyOfRange(0, FLASH_AUDIO_CHUNK_BYTES)
-                    flashAudioBuffer.reset()
-                    flashAudioBuffer.write(all, FLASH_AUDIO_CHUNK_BYTES, all.size - FLASH_AUDIO_CHUNK_BYTES)
-                }
+            // Cut at pauses in the speech rather than every fixed 3 s, so sentences are
+            // not split mid-word before transcription.
+            speechChunker.offer(pcm, hasAudibleMediaAudio(pcm)).forEach {
+                diag("audio", "chunk ${it.size / 32} ms")
+                queue.trySend(it)
             }
-            chunks.forEach { queue.trySend(it) }
         }
         val onError: (String) -> Unit = { message -> scope.launch { stopEverything(message, error = true) } }
         try {
@@ -452,6 +682,166 @@ class SubtitleSessionService : Service() {
             Log.e(TAG, "Flash audio capture failed", e)
             stopEverything(e.message ?: AppStrings.get(R.string.error_capture_start_failed), error = true)
         }
+    }
+
+    /**
+     * Hybrid mode: Groq Whisper transcribes each media chunk, then text translation
+     * follows the configured provider priority. GLM uses Gemini Flash as the first
+     * independent fallback and Groq Chat as the final fallback. The audio capture,
+     * MediaProjection token, and overlay are never restarted by translation failover.
+     * Always called under [translationMutex], so [recentTranscripts] needs no extra locking.
+     */
+    private suspend fun translateHybrid(
+        pcm: ByteArray,
+        groqKey: String,
+        geminiKey: String,
+        speechModel: String,
+        systemPrompt: String,
+        useGeminiText: Boolean = true,
+        useGlmText: Boolean = false,
+        glmKey: String = "",
+        groqChatModel: String = GroqTranslationClient.DEFAULT_CHAT_MODEL,
+    ): String {
+        if (!useGlmText && useGeminiText && geminiKey.isBlank()) {
+            throw IllegalStateException("Gemini API Key is required for the selected Gemini hybrid translation model")
+        }
+        val pipelineStartedAt = android.os.SystemClock.elapsedRealtime()
+        val whisperStartedAt = pipelineStartedAt
+        val transcript = groqTranslationClient.transcribePcm(pcm, groqKey, speechModel)
+        val whisperElapsedMs = android.os.SystemClock.elapsedRealtime() - whisperStartedAt
+        diag("latency", "stage=whisper ms=$whisperElapsedMs pcm_ms=${pcm.size / 32}")
+        if (transcript.isBlank()) {
+            diag("latency", "stage=hybrid-empty total_ms=${android.os.SystemClock.elapsedRealtime() - pipelineStartedAt}")
+            return ""
+        }
+        val context = recentTranscripts.toList()
+
+        suspend fun translateWithGroqFallback(): String =
+            groqTranslationClient.translateTranscriptToThai(
+                transcript = transcript,
+                apiKey = groqKey,
+                chatModel = groqChatModel,
+                previousLines = context,
+                systemPrompt = systemPrompt,
+            )
+
+        suspend fun translateWithGeminiFallback(): String {
+            if (geminiKey.isBlank()) {
+                diag("fallback", "gemini key missing; using groq chat")
+                return translateWithGroqFallback()
+            }
+            if (!geminiCircuitBreaker.allowRequest()) {
+                val seconds = (geminiCircuitBreaker.remainingCooldownMs() + 999L) / 1_000L
+                diag("circuit", "gemini open; retry in ${seconds}s; using groq chat")
+                return translateWithGroqFallback()
+            }
+            return try {
+                SessionBus.setStatus(
+                    SessionBus.Status.Running,
+                    "กำลังใช้ Gemini สำรองเพื่อแปลเป็นไทย",
+                )
+                val result = flashTranslationClient.translateTranscriptToThai(
+                    transcript, context, geminiKey, systemPrompt,
+                )
+                if (result.isBlank()) throw IllegalStateException("Gemini returned an empty translation")
+                geminiCircuitBreaker.recordSuccess()
+                diag("provider", "translation=gemini-fallback")
+                result
+            } catch (e: CancellationException) {
+                throw e
+            } catch (geminiError: Exception) {
+                geminiCircuitBreaker.recordFailure()
+                Log.w(TAG, "Gemini fallback failed; trying Groq Chat: ${geminiError.message}")
+                diag("fallback", "gemini failed; trying groq chat: ${geminiError.message}")
+                SessionBus.setStatus(
+                    SessionBus.Status.Running,
+                    "Gemini ใช้งานไม่ได้ · กำลังใช้ Groq Chat สำรอง",
+                )
+                translateWithGroqFallback()
+            }
+        }
+
+        val translated = if (useGlmText) {
+            if (!glmCircuitBreaker.allowRequest()) {
+                val seconds = (glmCircuitBreaker.remainingCooldownMs() + 999L) / 1_000L
+                Log.w(TAG, "GLM circuit open; skipping primary for ${seconds}s")
+                diag("circuit", "glm open; retry in ${seconds}s; trying fallback")
+                SessionBus.setStatus(
+                    SessionBus.Status.Running,
+                    "GLM พักชั่วคราว ${seconds} วินาที · กำลังใช้ระบบสำรอง",
+                )
+                translateWithGeminiFallback()
+            } else {
+                try {
+                    val glmStartedAt = android.os.SystemClock.elapsedRealtime()
+                    val result = com.livetranslate.app.live.GlmTranslationClient()
+                        .translateTranscriptToThai(
+                            transcript = transcript,
+                            apiKey = glmKey,
+                            previousLines = context,
+                            systemPrompt = systemPrompt,
+                        )
+                    val glmElapsedMs = android.os.SystemClock.elapsedRealtime() - glmStartedAt
+                    diag(
+                        "latency",
+                        "stage=glm ms=$glmElapsedMs whisper_ms=$whisperElapsedMs total_ms=${android.os.SystemClock.elapsedRealtime() - pipelineStartedAt} chars=${transcript.length}",
+                    )
+                    if (result.isBlank()) throw IllegalStateException("GLM returned an empty translation")
+                    glmCircuitBreaker.recordSuccess()
+                    diag("provider", "translation=glm")
+                    result
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (glmError: Exception) {
+                    glmCircuitBreaker.recordFailure()
+                    Log.w(TAG, "GLM failed; trying Gemini Flash fallback: ${glmError.message}")
+                    diag("fallback", "glm failed; trying gemini: ${glmError.message}")
+                    SessionBus.setStatus(
+                        SessionBus.Status.Running,
+                        "GLM ขัดข้อง · กำลังใช้ Gemini สำรอง",
+                    )
+                    translateWithGeminiFallback()
+                }
+            }
+        } else if (!useGeminiText) {
+            translateWithGroqFallback()
+        } else {
+            if (!geminiCircuitBreaker.allowRequest()) {
+                val seconds = (geminiCircuitBreaker.remainingCooldownMs() + 999L) / 1_000L
+                diag("circuit", "gemini open; retry in ${seconds}s; using groq chat")
+                translateWithGroqFallback()
+            } else {
+                try {
+                    val result = flashTranslationClient.translateTranscriptToThai(
+                        transcript, context, geminiKey, systemPrompt,
+                    )
+                    if (result.isBlank()) throw IllegalStateException("Gemini returned an empty translation")
+                    geminiCircuitBreaker.recordSuccess()
+                    result
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (geminiError: Exception) {
+                    geminiCircuitBreaker.recordFailure()
+                    Log.w(TAG, "Gemini text failed; falling back to Groq Chat: ${geminiError.message}")
+                    diag("fallback", "gemini failed; using groq chat: ${geminiError.message}")
+                    translateWithGroqFallback()
+                }
+            }
+        }
+
+        diag("hybrid", "src=\"${transcript.take(120)}\" th=\"${translated.take(120)}\" via=" +
+            when {
+                useGlmText -> "glm-primary-with-failover"
+                useGeminiText -> "gemini-text"
+                else -> "groq-chat"
+            })
+        recentTranscripts.addLast(transcript)
+        while (recentTranscripts.size > HYBRID_CONTEXT_LINES) recentTranscripts.removeFirst()
+        // Show the source line too (visible when bilingual captions are on).
+        appendTranscript(accumulatedInput, transcript)
+        appendFull(fullInput, transcript)
+        publishCaptionUpdate(inputChanged = true, outputChanged = false)
+        return translated
     }
 
     private fun startJapaneseSpeechRecognition(apiKey: String) {
@@ -492,7 +882,7 @@ class SubtitleSessionService : Service() {
                             try {
                                 val translated = flashTranslationClient.translateJapaneseToThai(
                                     transcript = text,
-                                    systemInstructions = currentSettings.geminiFlashSystemInstructions,
+                                    systemInstructions = currentSettings.effectiveCustomPrompt,
                                     apiKey = apiKey,
                                 )
                                 if (stopping) return@withLock
@@ -581,15 +971,19 @@ class SubtitleSessionService : Service() {
      * resumable and retries remain, reconnect transparently; otherwise stop.
      */
     private fun handleConnectionLoss(message: String) {
-        if (stopping) return
+        if (stopping || restartInProgress) return
         val client = liveClient
-        if (client == null || client.lastResumptionHandle == null ||
+        // Close 1008 "session not found": the saved resumption handle is stale, so
+        // retrying with it can never succeed. Drop it and start a fresh session.
+        val staleSession = message.contains("session not found", ignoreCase = true)
+        if (staleSession) client?.clearResumptionHandle()
+        if (client == null || (client.lastResumptionHandle == null && !staleSession) ||
             reconnectAttempts >= MAX_RECONNECTS
         ) {
             stopEverything(message, error = true)
             return
         }
-        scheduleReconnect(message)
+        scheduleReconnect(message, allowFreshSession = staleSession)
     }
 
     /**
@@ -597,19 +991,21 @@ class SubtitleSessionService : Service() {
      * running — sendPcm16le silently drops frames until setupComplete, so no
      * special buffering is needed for a short reconnect window.
      */
-    private fun scheduleReconnect(reason: String) {
-        if (stopping) return
+    private fun scheduleReconnect(reason: String, allowFreshSession: Boolean = false) {
+        if (stopping || restartInProgress) return
         // Failed state and Error event can both report the same loss —
         // dedupe while a reconnect is already scheduled.
         if (reconnectJob?.isActive == true) return
         val client = liveClient ?: return
-        val handle = client.lastResumptionHandle ?: run {
+        val handle = client.lastResumptionHandle
+        if (handle == null && !allowFreshSession) {
             stopEverything(reason, error = true)
             return
         }
         reconnectAttempts++
         val attempt = reconnectAttempts
         Log.w(TAG, "reconnect #$attempt after: $reason")
+        diag("live", "reconnect #$attempt fresh=${handle == null} after: $reason")
         SessionBus.setStatus(
             SessionBus.Status.Starting,
             AppStrings.get(R.string.status_reconnecting, reason, attempt, MAX_RECONNECTS),
@@ -654,17 +1050,17 @@ class SubtitleSessionService : Service() {
                         ?: throw IllegalStateException(AppStrings.get(R.string.error_missing_projection))
                     val cap = SystemAudioCapturer(ioScope)
                     mediaCapturer = cap
-                    cap.start(projection, { pcm -> client.sendPcm16le(pcm, 16_000) }, onCaptureError)
+                    cap.start(projection, { pcm -> if (hasAudibleMediaAudio(pcm)) client.sendPcm16le(pcm, 16_000) }, onCaptureError)
                 }
                 AudioSourceMode.MIC -> {
                     val mic = MicAudioCapturer(ioScope)
                     micCapturer = mic
-                    mic.start({ pcm -> client.sendPcm16le(pcm, 16_000) }, onCaptureError)
+                    mic.start({ pcm -> if (hasAudibleMediaAudio(pcm)) client.sendPcm16le(pcm, 16_000) }, onCaptureError)
                 }
                 AudioSourceMode.MEDIA_AND_MIC -> {
                     val projection = mediaProjection
                         ?: throw IllegalStateException(AppStrings.get(R.string.error_missing_projection))
-              val mixer = PcmMixer { mixed -> client.sendPcm16le(mixed, 16_000) }
+              val mixer = PcmMixer { mixed -> if (hasAudibleMediaAudio(mixed)) client.sendPcm16le(mixed, 16_000) }
                     pcmMixer = mixer
                     val media = SystemAudioCapturer(ioScope)
                     mediaCapturer = media
@@ -721,6 +1117,29 @@ class SubtitleSessionService : Service() {
                 output = if (outputChanged) outDisplay else null,
             )
         }
+    }
+
+    /** Reject near-silent PCM before any provider sees it; input is signed 16-bit mono PCM. */
+    private fun diag(tag: String, message: String) =
+        com.livetranslate.app.util.DiagnosticsLog.add(tag, message)
+
+    private fun hasAudibleMediaAudio(pcm: ByteArray): Boolean {
+        if (pcm.size < 2) return false
+        var sumSquares = 0.0
+        var peak = 0
+        var samples = 0
+        var i = 0
+        while (i + 1 < pcm.size) {
+            val sample = ((pcm[i + 1].toInt() shl 8) or (pcm[i].toInt() and 0xff)).toShort().toInt()
+            val magnitude = kotlin.math.abs(sample)
+            if (magnitude > peak) peak = magnitude
+            sumSquares += sample.toDouble() * sample.toDouble()
+            samples++
+            i += 2
+        }
+        if (samples == 0) return false
+        val rms = kotlin.math.sqrt(sumSquares / samples)
+        return rms >= 120.0 || peak >= 450
     }
 
     private fun appendTranscript(buffer: StringBuilder, chunk: String) {
@@ -824,9 +1243,133 @@ class SubtitleSessionService : Service() {
         }
     }
 
+    /**
+     * Restart translation without ending the session. Keeps the MediaProjection
+     * grant, the overlay and the foreground notification; drops queued audio and
+     * in-flight requests, clears the on-screen captions (the full transcript is
+     * kept for export) and starts capture + translation again.
+     *
+     * If the platform refuses to re-open capture on the existing grant, the
+     * normal error path ends the session; long-press ↻ then does a full relaunch.
+     */
+    private fun restartTranslationInPlace() {
+        if (stopping || restartInProgress) return
+        restartInProgress = true
+        SessionBus.setStatus(SessionBus.Status.Starting, AppStrings.get(R.string.status_restarting))
+
+        // 1) Stop feeding audio, cancel queued / in-flight Groq or Flash requests.
+        mediaCapturer?.stop(); mediaCapturer = null
+        micCapturer?.stop(); micCapturer = null
+        pcmMixer?.close(); pcmMixer = null
+        releaseJapaneseSpeechRecognition() // also closes flashAudioQueue and cancels flashTranslationJob
+        synchronized(flashAudioBufferLock) { flashAudioBuffer = ByteArrayOutputStream() }
+        speechChunker.reset()
+        reconnectJob?.cancel(); reconnectJob = null
+        reconnectAttempts = 0
+        captureStarted = false
+
+        // 2) Clear what is on screen (fullInput/fullOutput stay for the export).
+        previewFlushJob?.cancel(); previewFlushJob = null
+        pendingPreviewInput = null
+        pendingPreviewOutput = null
+        recentTranscripts.clear()
+        accumulatedInput.clear()
+        accumulatedOutput.clear()
+        sameLanguageMode.reset()
+        overlay?.setSameLanguageMode(false)
+        publishCaptionUpdate(inputChanged = true, outputChanged = true)
+
+        // 3) Rebuild the pipeline after a short pause so AudioRecord is released.
+        val app = application as LiveTranslateApp
+        scope.launch {
+            delay(300L)
+            if (stopping) return@launch
+            val groqPipeline = currentSettings.translationProvider != TranslationProvider.GEMINI
+            val key = if (groqPipeline) app.apiKeyStore.getGroqApiKey() else app.apiKeyStore.nextRotatedKey()
+            if (key.isBlank() || (currentSettings.translationProvider == TranslationProvider.GLM &&
+                    !app.apiKeyStore.hasGlmApiKey())) {
+                stopEverything(AppStrings.get(R.string.msg_need_api_key), error = true)
+                return@launch
+            }
+            if (groqPipeline || currentSettings.geminiFlashTestMode) {
+                startFlashAudioCapture(key)
+                if (!stopping) {
+                    SessionBus.setStatus(
+                        SessionBus.Status.Running,
+                        when (currentSettings.translationProvider) {
+                            TranslationProvider.GLM -> "Groq Whisper กำลังถอดเสียง · GLM กำลังแปลเป็นไทย"
+                            TranslationProvider.GROQ -> "Groq กำลังแปลเสียงเป็นภาษาไทย"
+                            TranslationProvider.GEMINI -> getString(R.string.gemini_flash_test_running)
+                        },
+                    )
+                }
+                restartInProgress = false
+            } else {
+                // Gemini Live: open a fresh connection (no resumption handle). The
+                // Ready / SetupComplete handlers restart capture and clear the flag.
+                val live = liveClient
+                if (live == null) {
+                    stopEverything(AppStrings.get(R.string.error_disconnected), error = true)
+                    return@launch
+                }
+                live.connect(
+                    LiveTranslateClient.SessionConfig(
+                        endpoint = currentSettings.endpoint,
+                        apiKey = key,
+                        modelId = currentSettings.modelId,
+                        targetLanguageCode = SupportedLanguages.canonicalOrDefault(
+                            currentSettings.targetLanguageCode,
+                        ),
+                        echoTargetLanguage = true,
+                        customPrompt = currentSettings.customPrompt,
+                    ),
+                )
+                // Safety net: never leave auto-reconnect suppressed if setup never completes.
+                delay(10_000L)
+                restartInProgress = false
+            }
+        }
+    }
+
+    /**
+     * Relaunch the main app after ending the active media-capture session.
+     * The overlay is a user-tapped surface, so this action is initiated directly
+     * from an explicit user interaction rather than a background timer.
+     */
+    private fun restartAppFromOverlay() {
+        // MediaProjection grants are one-session tokens. End the current
+        // capture first, then immediately launch the activity to request a
+        // fresh system-capture grant. Do not delay startActivity: on newer
+        // Android versions a delayed launch from a foreground service can
+        // lose the user-initiated activity-launch allowance.
+        val launchIntent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            putExtra(MainActivity.EXTRA_AUTO_START, true)
+        }
+        // Launch while this service is still foreground and the overlay tap
+        // is still a fresh user interaction. The activity's auto-start flow
+        // runs after this callback returns, by which time teardown is complete.
+        val launched = runCatching { startActivity(launchIntent) }
+            .onFailure {
+                Log.e(TAG, "Could not relaunch app for automatic restart", it)
+                SessionBus.setStatus(
+                    SessionBus.Status.Error,
+                    AppStrings.get(R.string.status_restarting),
+                )
+            }.isSuccess
+        stopEverything(AppStrings.get(R.string.status_restarting))
+        if (!launched) {
+            SessionBus.setStatus(
+                SessionBus.Status.Error,
+                AppStrings.get(R.string.status_restarting),
+            )
+        }
+    }
+
     private fun stopEverything(message: String, error: Boolean = false) {
         if (stopping) return
         stopping = true
+        restartInProgress = false
         releaseJapaneseSpeechRecognition()
         sessionJob?.cancel()
         sessionJob = null
@@ -898,7 +1441,7 @@ class SubtitleSessionService : Service() {
         private const val MAX_RECONNECTS = 6
         private const val RECONNECT_BASE_DELAY_MS = 1_500L
         private const val RECOGNITION_RESTART_DELAY_MS = 350L
-        private const val FLASH_AUDIO_CHUNK_BYTES = 160_000
+        private const val HYBRID_CONTEXT_LINES = 3
         private const val JAPANESE_LOCALE = "ja-JP"
         private const val CHINESE_LOCALE = "zh-CN"
         const val ACTION_START = "com.livetranslate.app.action.START_SUBTITLE"

@@ -95,6 +95,8 @@
     <string name="settings_permissions_hint">Starting subtitles will request screen-capture permission to record other apps\' audio.</string>
     <string name="settings_about">About</string>
     <string name="settings_version">Version %1$s</string>
+    <string name="settings_copy_diagnostics">Copy diagnostics</string>
+    <string name="settings_diagnostics_copied">Diagnostics copied</string>
     <string name="settings_github">GitHub</string>
     <string name="settings_github_pending">Repository URL not configured</string>
     <string name="settings_github_open">Open project repository</string>

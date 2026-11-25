@@ -7,6 +7,17 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+// Short commit id shown in Settings > About so it is clear which build is installed.
+val gitSha: String = System.getenv("GITHUB_SHA")?.take(7)
+    ?: runCatching {
+        ProcessBuilder("git", "rev-parse", "--short", "HEAD")
+            .directory(rootDir)
+            .redirectErrorStream(true)
+            .start()
+            .inputStream.bufferedReader().readText().trim()
+    }.getOrNull()?.takeIf { it.matches(Regex("[0-9a-f]{4,40}")) }
+    ?: "unknown"
+
 android {
     namespace = "com.livetranslate.app"
     compileSdk {
@@ -23,6 +34,7 @@ android {
         // CI can override: -PVERSION_CODE=2 -PVERSION_NAME=0.1.1
         versionCode = (findProperty("VERSION_CODE") as String?)?.toIntOrNull() ?: 1
         versionName = (findProperty("VERSION_NAME") as String?) ?: "0.1.0"
+        buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

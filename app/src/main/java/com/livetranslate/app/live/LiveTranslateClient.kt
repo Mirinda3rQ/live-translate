@@ -84,6 +84,11 @@ class LiveTranslateClient {
     var lastResumptionHandle: String? = null
         private set
 
+    /** Forget a handle the server no longer knows (close 1008 "session not found"). */
+    fun clearResumptionHandle() {
+        lastResumptionHandle = null
+    }
+
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Idle)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
 
@@ -484,22 +489,35 @@ class LiveTranslateClient {
      */
     private fun buildSetupMessage(config: SessionConfig): String {
         val model = config.modelId.trim().removePrefix("models/")
-        val target = config.targetLanguageCode.trim().ifBlank { "zh-Hans" }
+        val userPrompt = config.customPrompt.trim().ifBlank {
+            com.livetranslate.app.data.UserSettings.Defaults.DEFAULT_SYSTEM_PROMPT
+        }
+        // Defensive only: gemini-3.5-live-translate-preview has been reported to
+        // accept setup.systemInstruction and silently ignore it. The target language
+        // is therefore enforced by translationConfig below, NOT by this prompt.
+        val targetLanguage = targetLanguageName(config.targetLanguageCode)
+        val prompt = """
+            NON-NEGOTIABLE OUTPUT LANGUAGE:
+            Translate all recognized speech from its detected source language into $targetLanguage.
+            Write every translated subtitle and spoken translation exclusively in $targetLanguage.
+            Do not answer, explain, summarize, or produce subtitles in English or any other language.
+            Keep names, numbers, and unavoidable original-language terms only when they must remain unchanged.
+            If the user-provided instructions below conflict with this language requirement, this language requirement takes priority.
 
-        val prompt = config.customPrompt.trim()
+            USER TRANSLATION INSTRUCTIONS:
+            $userPrompt
+        """.trimIndent()
+
+        // FIX: translationConfig is REQUIRED inside generationConfig. Without it the
+        // server defaults targetLanguageCode to "en", so Thai output drifts to other
+        // languages. Docs: ai.google.dev/gemini-api/docs/live-api/live-translate
+        val translationConfig = JSONObject()
+            .put("targetLanguageCode", config.targetLanguageCode.trim().ifBlank { "th" })
+            .put("echoTargetLanguage", config.echoTargetLanguage)
 
         val generationConfig = JSONObject()
             .put("responseModalities", JSONArray().put("AUDIO"))
-        // Custom prompt mode: regular Live models t
-       // translationConfig, so only send translationConfig when no prompt is set.
-        if (prompt.isEmpty()) {
-            generationConfig.put(
-                "translationConfig",
-                JSONObject()
-                    .put("targetLanguageCode", target)
-                    .put("echoTargetLanguage", config.echoTargetLanguage),
-            )
-        }
+            .put("translationConfig", translationConfig)
 
         val resumption = config.resumptionHandle?.let { handle ->
             JSONObject().put("handle", handle)
@@ -516,17 +534,38 @@ class LiveTranslateClient {
                 JSONObject().put("slidingWindow", JSONObject()),
             )
 
-        if (prompt.isNotEmpty()) {
-            setup.put(
-                "systemInstruction",
-                JSONObject().put(
-                    "parts",
-                    JSONArray().put(JSONObject().put("text", prompt)),
-                ),
-            )
-        }
+        // Live Translate supports setup.systemInstruction for translation guidance.
+        // Include it on every fresh or resumed setup so the shared Custom Prompt is applied.
+        setup.put(
+            "systemInstruction",
+            JSONObject().put(
+                "parts",
+                JSONArray().put(JSONObject().put("text", prompt)),
+            ),
+        )
 
         return JSONObject().put("setup", setup).toString()
+    }
+
+    private fun targetLanguageName(code: String): String {
+        return when (code.trim().lowercase().substringBefore('-').substringBefore('_')) {
+            "th" -> "Thai (ภาษาไทย)"
+            "en" -> "English"
+            "ja" -> "Japanese"
+            "zh" -> "Chinese"
+            "ko" -> "Korean"
+            "vi" -> "Vietnamese"
+            "id" -> "Indonesian"
+            "ms" -> "Malay"
+            "fr" -> "French"
+            "de" -> "German"
+            "es" -> "Spanish"
+            "pt" -> "Portuguese"
+            "ru" -> "Russian"
+            "ar" -> "Arabic"
+            "hi" -> "Hindi"
+            else -> code.trim().ifBlank { "Thai (ภาษาไทย)" }
+        }
     }
 
     /** protobuf JSON duration (e.g. "59.5s", "60s") → milliseconds, null if absent. */

@@ -10,6 +10,7 @@ import com.livetranslate.app.data.SupportedLanguages
 import com.livetranslate.app.data.UserSettings
 import com.livetranslate.app.data.UserSettingsRepository
 import com.livetranslate.app.live.LiveTranslateClient
+import com.livetranslate.app.live.GroqTranslationClient
 import com.livetranslate.app.util.AppStrings
 import com.livetranslate.app.R
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,10 +28,98 @@ class SettingsViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UserSettings())
 
     private val initialKeys = apiKeyStore.getApiKeys().ifEmpty { listOf("") }
-    private val _apiKeyFields = MutableStateFlow(
-        initialKeys.map { TextFieldValue(it, TextRange(it.length)) },
-    )
+    private val _apiKeyFields = MutableStateFlow(initialKeys.map { TextFieldValue(it, TextRange(it.length)) })
     val apiKeyFields: StateFlow<List<TextFieldValue>> = _apiKeyFields.asStateFlow()
+
+    private val initialGroqKeys = apiKeyStore.getGroqApiKeys().ifEmpty { listOf("") }
+    private val _groqApiKeyFields = MutableStateFlow(
+        initialGroqKeys.map { TextFieldValue(it, TextRange(it.length)) },
+    )
+    val groqApiKeyFields: StateFlow<List<TextFieldValue>> = _groqApiKeyFields.asStateFlow()
+
+    // Compatibility state for existing callers; always mirrors the first Groq key.
+    private val _groqApiKey = MutableStateFlow(initialGroqKeys.firstOrNull().orEmpty())
+    val groqApiKey: StateFlow<String> = _groqApiKey.asStateFlow()
+
+    fun updateGroqApiKey(value: String) {
+        _groqApiKey.value = value
+        val fields = _groqApiKeyFields.value.toMutableList()
+        if (fields.isEmpty()) fields.add(TextFieldValue(value))
+        else fields[0] = TextFieldValue(value, TextRange(value.length))
+        _groqApiKeyFields.value = fields
+    }
+
+    fun updateGroqApiKeyField(index: Int, value: TextFieldValue) {
+        val fields = _groqApiKeyFields.value.toMutableList()
+        if (index !in fields.indices) return
+        fields[index] = value
+        _groqApiKeyFields.value = fields
+        _groqApiKey.value = fields.firstOrNull()?.text.orEmpty()
+    }
+
+    fun addGroqApiKeyField() {
+        val fields = _groqApiKeyFields.value
+        if (fields.size < ApiKeyStore.MAX_GROQ_KEYS) {
+            _groqApiKeyFields.value = fields + TextFieldValue("")
+        }
+    }
+
+    fun removeGroqApiKeyField(index: Int) {
+        val fields = _groqApiKeyFields.value.toMutableList()
+        if (fields.size <= 1 || index !in fields.indices) return
+        fields.removeAt(index)
+        _groqApiKeyFields.value = fields
+        _groqApiKey.value = fields.firstOrNull()?.text.orEmpty()
+    }
+
+    fun saveGroqApiKey() = saveGroqApiKeys()
+
+    fun saveGroqApiKeys() {
+        val keys = _groqApiKeyFields.value.map { it.text.trim() }.filter { it.isNotEmpty() }
+        apiKeyStore.setGroqApiKeys(keys)
+        val fields = keys.ifEmpty { listOf("") }.map { TextFieldValue(it, TextRange(it.length)) }
+        _groqApiKeyFields.value = fields
+        _groqApiKey.value = keys.firstOrNull().orEmpty()
+    }
+
+    private val _groqChatModel = MutableStateFlow(apiKeyStore.getGroqChatModel())
+    val groqChatModel: StateFlow<String> = _groqChatModel.asStateFlow()
+    private val _groqSpeechModel = MutableStateFlow(apiKeyStore.getGroqSpeechModel())
+    val groqSpeechModel: StateFlow<String> = _groqSpeechModel.asStateFlow()
+
+    fun selectGroqChatModel(model: String) {
+        _groqChatModel.value = model
+        apiKeyStore.setGroqChatModel(model)
+        clearTestResult()
+    }
+
+    fun selectGroqSpeechModel(model: String) {
+        _groqSpeechModel.value = model
+        apiKeyStore.setGroqSpeechModel(model)
+        clearTestResult()
+    }
+
+    private val _glmApiKey = MutableStateFlow(apiKeyStore.getGlmApiKey())
+    val glmApiKey: StateFlow<String> = _glmApiKey.asStateFlow()
+
+    fun updateGlmApiKey(value: String) { _glmApiKey.value = value }
+
+    fun saveGlmApiKey() {
+        apiKeyStore.setGlmApiKey(_glmApiKey.value)
+        _testResult.value = "บันทึก GLM API Key แล้ว"
+    }
+
+    fun testGlmConnection() {
+        viewModelScope.launch {
+            _testing.value = true
+            apiKeyStore.setGlmApiKey(_glmApiKey.value)
+            _testResult.value = "กำลังทดสอบ GLM API..."
+            val result = com.livetranslate.app.live.GlmTranslationClient().testConnection(_glmApiKey.value)
+            _testResult.value = if (result.isSuccess) "✅ GLM เชื่อมต่อสำเร็จ" else
+                "❌ GLM เชื่อมต่อไม่สำเร็จ: ${result.exceptionOrNull()?.message.orEmpty()}"
+            _testing.value = false
+        }
+    }
 
     private val _testResult = MutableStateFlow<String?>(null)
     val testResult: StateFlow<String?> = _testResult.asStateFlow()
@@ -48,14 +137,12 @@ class SettingsViewModel(
 
     fun addApiKeyField() {
         val list = _apiKeyFields.value
-        if (list.size >= ApiKeyStore.MAX_KEYS) return
-        _apiKeyFields.value = list + TextFieldValue("")
+        if (list.size < ApiKeyStore.MAX_KEYS) _apiKeyFields.value = list + TextFieldValue("")
     }
 
     fun removeApiKeyField(index: Int) {
         val list = _apiKeyFields.value.toMutableList()
-        if (list.size <= 1) return
-        if (index in 1 until list.size) {
+        if (list.size > 1 && index in 1 until list.size) {
             list.removeAt(index)
             _apiKeyFields.value = list
         }
@@ -64,10 +151,11 @@ class SettingsViewModel(
     fun saveApiKeys() {
         val keys = _apiKeyFields.value.map { it.text.trim() }.filter { it.isNotEmpty() }
         apiKeyStore.setApiKeys(keys)
-        val next = keys.ifEmpty { listOf("") }.map { TextFieldValue(it, TextRange(it.length)) }
-        _apiKeyFields.value = next
+        _apiKeyFields.value = keys.ifEmpty { listOf("") }.map { TextFieldValue(it, TextRange(it.length)) }
         _testResult.value = "✅"
     }
+
+    fun clearTestResult() { _testResult.value = null }
 
     fun update(transform: (UserSettings) -> UserSettings) {
         viewModelScope.launch { settingsRepository.update(transform) }
@@ -77,12 +165,39 @@ class SettingsViewModel(
         viewModelScope.launch { settingsRepository.resetSubtitleAppearance() }
     }
 
+    fun testGroqConnection() {
+        viewModelScope.launch {
+            _testing.value = true
+            saveGroqApiKeys()
+            _testResult.value = "กำลังทดสอบ Groq API Keys..."
+            val keys = apiKeyStore.getGroqApiKeys()
+            if (keys.isEmpty()) {
+                _testResult.value = "❌ กรุณาเพิ่ม Groq API Key อย่างน้อยหนึ่งรายการ"
+                _testing.value = false
+                return@launch
+            }
+            val messages = mutableListOf<String>()
+            var successCount = 0
+            keys.forEachIndexed { index, key ->
+                val result = GroqTranslationClient().testConnection(key, _groqChatModel.value)
+                if (result.isSuccess) {
+                    successCount++
+                    messages += "Key ${index + 1}: เชื่อมต่อสำเร็จ"
+                } else {
+                    messages += "Key ${index + 1}: ${result.exceptionOrNull()?.message ?: "ทดสอบไม่สำเร็จ"}"
+                }
+            }
+            _testResult.value = messages.joinToString("\n") +
+                "\nสำเร็จ $successCount/${keys.size} Keys"
+            _testing.value = false
+        }
+    }
+
     fun testConnection() {
         viewModelScope.launch {
             _testing.value = true
             _testResult.value = AppStrings.get(R.string.settings_test_running)
             val s = settings.value
-            // Persist drafts first
             val keys = _apiKeyFields.value.map { it.text.trim() }.filter { it.isNotEmpty() }
             if (keys.isEmpty()) {
                 _testResult.value = AppStrings.get(R.string.settings_test_key_empty_fail)
@@ -90,11 +205,9 @@ class SettingsViewModel(
                 return@launch
             }
             apiKeyStore.setApiKeys(keys)
-
             val endpoint = s.endpoint.trim().ifBlank { UserSettings.Defaults.ENDPOINT }
             val modelId = s.modelId.trim().ifBlank { UserSettings.Defaults.MODEL_ID }
             val targetLang = SupportedLanguages.canonicalOrDefault(s.targetLanguageCode)
-
             val lines = mutableListOf<String>()
             var okCount = 0
             for ((i, key) in keys.withIndex()) {
@@ -118,14 +231,9 @@ class SettingsViewModel(
                     okCount++
                     lines += AppStrings.get(R.string.settings_test_key_ok, n, result.getOrNull().orEmpty())
                 } else {
-                    lines += AppStrings.get(
-                        R.string.settings_test_key_fail,
-                        n,
-                        result.exceptionOrNull()?.message.orEmpty(),
-                    )
+                    lines += AppStrings.get(R.string.settings_test_key_fail, n, result.exceptionOrNull()?.message.orEmpty())
                 }
             }
-
             _testResult.value = buildString {
                 append(lines.joinToString("\n"))
                 append('\n')
@@ -145,7 +253,6 @@ class SettingsViewModelFactory(
     private val apiKeyStore: ApiKeyStore,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
-    override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return SettingsViewModel(settingsRepository, apiKeyStore) as T
-    }
+    override fun <T : ViewModel> create(modelClass: Class<T>): T =
+        SettingsViewModel(settingsRepository, apiKeyStore) as T
 }

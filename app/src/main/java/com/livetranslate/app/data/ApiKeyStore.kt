@@ -9,46 +9,20 @@ import org.json.JSONArray
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Stores up to [MAX_KEYS] API keys (encrypted when possible) and supports rotation.
+ * Stores provider API keys (encrypted when possible) and supports bounded key rotation.
+ * Legacy single-key preferences are migrated lazily and kept in sync for compatibility.
  */
 class ApiKeyStore(context: Context) {
     private val prefs: SharedPreferences = createPrefs(context.applicationContext)
     private val rotateIndex = AtomicInteger(0)
+    private val groqRotateIndex = AtomicInteger(0)
 
-    fun getApiKeys(): List<String> {
-        val raw = prefs.getString(KEY_API_LIST, null)
-        if (!raw.isNullOrBlank()) {
-            return runCatching {
-                val arr = JSONArray(raw)
-                buildList {
-                    for (i in 0 until arr.length()) {
-                        val s = arr.optString(i).trim()
-                        if (s.isNotEmpty()) add(s)
-                    }
-                }
-            }.getOrDefault(emptyList()).ifEmpty {
-                // migrate legacy single key
-                val legacy = prefs.getString(KEY_API, "").orEmpty().trim()
-                if (legacy.isNotEmpty()) listOf(legacy) else emptyList()
-            }
-        }
-        val legacy = prefs.getString(KEY_API, "").orEmpty().trim()
-        return if (legacy.isNotEmpty()) listOf(legacy) else emptyList()
-    }
+    fun getApiKeys(): List<String> = readKeyList(KEY_API_LIST, KEY_API)
 
     fun setApiKeys(keys: List<String>) {
-        val cleaned = keys.map { it.trim() }.filter { it.isNotEmpty() }.take(MAX_KEYS)
-        val arr = JSONArray()
-        cleaned.forEach { arr.put(it) }
-        prefs.edit()
-            .putString(KEY_API_LIST, arr.toString())
-            .putString(KEY_API, cleaned.firstOrNull().orEmpty()) // keep legacy field in sync
-            .apply()
-        if (cleaned.isEmpty()) {
-            rotateIndex.set(0)
-        } else {
-            rotateIndex.updateAndGet { it.coerceIn(0, cleaned.lastIndex) }
-        }
+        val cleaned = cleanKeys(keys, MAX_KEYS)
+        writeKeyList(KEY_API_LIST, KEY_API, cleaned)
+        rotateIndex.updateAndGet { if (cleaned.isEmpty()) 0 else it.coerceIn(0, cleaned.lastIndex) }
     }
 
     /** Legacy helpers used by older call sites. */
@@ -61,9 +35,79 @@ class ApiKeyStore(context: Context) {
 
     fun hasApiKey(): Boolean = getApiKeys().isNotEmpty()
 
+    /** Groq supports multiple credentials; the old single-key field is migrated automatically. */
+    fun getGroqApiKeys(): List<String> = readKeyList(KEY_GROQ_API_LIST, KEY_GROQ_API)
+
+    fun setGroqApiKeys(keys: List<String>) {
+        val cleaned = cleanKeys(keys, MAX_GROQ_KEYS)
+        writeKeyList(KEY_GROQ_API_LIST, KEY_GROQ_API, cleaned)
+        groqRotateIndex.updateAndGet { if (cleaned.isEmpty()) 0 else it.coerceIn(0, cleaned.lastIndex) }
+    }
+
+    fun getGroqApiKey(): String = getGroqApiKeys().firstOrNull().orEmpty()
+
+    fun setGroqApiKey(value: String) = setGroqApiKeys(listOf(value))
+
+    fun hasGroqApiKey(): Boolean = getGroqApiKeys().isNotEmpty()
+
+    /** Returns the next configured Groq key in round-robin order. */
+    fun nextGroqApiKey(): String {
+        val keys = getGroqApiKeys()
+        if (keys.isEmpty()) return ""
+        val index = groqRotateIndex.getAndUpdate { (it + 1) % keys.size }
+        return keys[index % keys.size]
+    }
+
+    /** Atomically advances the starting key and returns every configured key in failover order. */
+    fun nextGroqApiKeys(): List<String> {
+        val keys = getGroqApiKeys()
+        if (keys.isEmpty()) return emptyList()
+        val start = groqRotateIndex.getAndUpdate { (it + 1) % keys.size } % keys.size
+        return keys.drop(start) + keys.take(start)
+    }
+
+    /** All Groq keys, starting at the selected key, for bounded failover attempts. */
+    fun groqKeysFrom(startIndex: Int = 0): List<String> {
+        val keys = getGroqApiKeys()
+        if (keys.isEmpty()) return emptyList()
+        val start = startIndex.coerceIn(0, keys.lastIndex)
+        return keys.drop(start) + keys.take(start)
+    }
+
+    /** GLM text-translation credential, stored in the same encrypted preferences. */
+    fun getGlmApiKey(): String = prefs.getString(KEY_GLM_API, "").orEmpty()
+
+    fun setGlmApiKey(value: String) {
+        prefs.edit().putString(KEY_GLM_API, value.trim()).apply()
+    }
+
+    fun hasGlmApiKey(): Boolean = getGlmApiKey().isNotBlank()
+
     /**
-     * Round-robin pick for a new session. Empty string if none.
+     * Restore the established Groq Whisper -> Gemini Flash translation pairing for users
+     * who were still on the previous implicit GPT-OSS default. Explicit non-default choices
+     * (for example GPT-OSS 20B or Qwen) remain untouched.
      */
+    fun getGroqChatModel(): String {
+        val stored = prefs.getString(KEY_GROQ_CHAT_MODEL, null)
+        return if (stored.isNullOrBlank() || stored == LEGACY_DEFAULT_GROQ_CHAT_MODEL) {
+            prefs.edit().putString(KEY_GROQ_CHAT_MODEL, DEFAULT_GROQ_CHAT_MODEL).apply()
+            DEFAULT_GROQ_CHAT_MODEL
+        } else {
+            stored
+        }
+    }
+
+    fun setGroqChatModel(value: String) {
+        prefs.edit().putString(KEY_GROQ_CHAT_MODEL, value).apply()
+    }
+
+    fun getGroqSpeechModel(): String = prefs.getString(KEY_GROQ_SPEECH_MODEL, DEFAULT_GROQ_SPEECH_MODEL).orEmpty()
+    fun setGroqSpeechModel(value: String) {
+        prefs.edit().putString(KEY_GROQ_SPEECH_MODEL, value).apply()
+    }
+
+    /** Round-robin pick for a new Gemini session. Empty string if none. */
     fun nextRotatedKey(): String {
         val keys = getApiKeys()
         if (keys.isEmpty()) return ""
@@ -71,15 +115,48 @@ class ApiKeyStore(context: Context) {
         return keys[i % keys.size]
     }
 
-    /**
-     * Try keys starting from [startIndex] (inclusive) for connection test / failover.
-     */
+    /** Try Gemini keys starting from [startIndex] (inclusive). */
     fun keysFrom(startIndex: Int = 0): List<String> {
         val keys = getApiKeys()
         if (keys.isEmpty()) return emptyList()
         val start = startIndex.coerceIn(0, keys.lastIndex)
         return keys.drop(start) + keys.take(start)
     }
+
+    private fun readKeyList(listKey: String, legacyKey: String): List<String> {
+        val raw = prefs.getString(listKey, null)
+        if (!raw.isNullOrBlank()) {
+            val parsed = runCatching {
+                val array = JSONArray(raw)
+                buildList {
+                    for (i in 0 until array.length()) {
+                        val key = array.optString(i).trim()
+                        if (key.isNotEmpty()) add(key)
+                    }
+                }
+            }.getOrDefault(emptyList())
+            if (parsed.isNotEmpty()) return parsed
+        }
+        val legacy = prefs.getString(legacyKey, "").orEmpty().trim()
+        if (legacy.isNotEmpty()) {
+            val migrated = listOf(legacy)
+            writeKeyList(listKey, legacyKey, migrated)
+            return migrated
+        }
+        return emptyList()
+    }
+
+    private fun writeKeyList(listKey: String, legacyKey: String, keys: List<String>) {
+        val array = JSONArray()
+        keys.forEach(array::put)
+        prefs.edit()
+            .putString(listKey, array.toString())
+            .putString(legacyKey, keys.firstOrNull().orEmpty())
+            .apply()
+    }
+
+    private fun cleanKeys(keys: List<String>, max: Int): List<String> =
+        keys.map(String::trim).filter(String::isNotEmpty).distinct().take(max)
 
     private fun createPrefs(context: Context): SharedPreferences {
         return try {
@@ -104,6 +181,15 @@ class ApiKeyStore(context: Context) {
         private const val FILE_NAME_FALLBACK = "api_prefs_fallback"
         private const val KEY_API = "api_key"
         private const val KEY_API_LIST = "api_key_list"
+        private const val KEY_GROQ_API = "groq_api_key"
+        private const val KEY_GLM_API = "glm_api_key"
+        private const val KEY_GROQ_API_LIST = "groq_api_key_list"
+        private const val KEY_GROQ_CHAT_MODEL = "groq_chat_model"
+        private const val KEY_GROQ_SPEECH_MODEL = "groq_speech_model"
+        private const val LEGACY_DEFAULT_GROQ_CHAT_MODEL = "openai/gpt-oss-120b"
+        const val DEFAULT_GROQ_CHAT_MODEL = "gemini-hybrid"
+        const val DEFAULT_GROQ_SPEECH_MODEL = "whisper-large-v3-turbo"
         const val MAX_KEYS = 10
+        const val MAX_GROQ_KEYS = 5
     }
 }
