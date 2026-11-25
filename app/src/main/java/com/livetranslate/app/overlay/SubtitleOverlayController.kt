@@ -513,7 +513,6 @@ class SubtitleOverlayController(
         val bg = GradientDrawable().apply {
             cornerRadius = 18 * density
             setColor(Color.argb((settings.backgroundAlpha * 255).toInt().coerceIn(0, 242), 12, 16, 24))
-            setStroke(max(1, (1 * density).roundToInt()), Color.argb(72, 255, 255, 255))
         }
         root.background = bg
         val padH = (10 * density).roundToInt()
