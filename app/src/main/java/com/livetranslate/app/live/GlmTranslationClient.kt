@@ -31,7 +31,8 @@ class GlmTranslationClient(
         val userMessage = buildString {
             if (previousLines.isNotEmpty()) {
                 append("Previous source lines (context only; do not repeat):\n")
-                previousLines.takeLast(4).forEach { append("- ").append(it).append('\n') }
+                // Two recent lines are enough for continuity; keep each request lean.
+                previousLines.takeLast(2).forEach { append("- ").append(it).append('\n') }
                 append('\n')
             }
             append("Translate this source transcript into Thai. Return only the Thai translation:\n\n")
@@ -43,8 +44,10 @@ class GlmTranslationClient(
                 .put(JSONObject().put("role", "system")
                     .put("content", TargetLanguageGuard.thaiOnlySystemPrompt(systemPrompt)))
                 .put(JSONObject().put("role", "user").put("content", userMessage)))
-            .put("temperature", 0.1)
-            .put("max_tokens", 512)
+            // Subtitle chunks are short. A smaller output budget reduces needless
+            // generation while retaining ample room for a 2–3 second Thai segment.
+            .put("temperature", 0.0)
+            .put("max_tokens", 256)
             .toString()
             .toRequestBody(JSON_MEDIA_TYPE)
 
