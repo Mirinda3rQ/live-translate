@@ -326,7 +326,7 @@ fun SettingsScreen(
         }
 
         // ---------------------------------------------------------------- Provider fallback
-        if (isGroq) {
+        if (settings.translationProvider == TranslationProvider.GROQ) {
             SectionTitle("Gemini สำรองอัตโนมัติ")
             SectionCard {
                 Column(
