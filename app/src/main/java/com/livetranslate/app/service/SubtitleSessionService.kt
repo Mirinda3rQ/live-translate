@@ -90,6 +90,8 @@ class SubtitleSessionService : Service() {
     private val translationMutex = Mutex()
     private val flashTranslationClient = GeminiFlashTranslationClient()
     private val groqTranslationClient = GroqTranslationClient()
+    private val glmCircuitBreaker = com.livetranslate.app.live.ProviderCircuitBreaker()
+    private val geminiCircuitBreaker = com.livetranslate.app.live.ProviderCircuitBreaker()
     /** Last few source-language lines, sent to Gemini as translation context (hybrid mode). */
     private val recentTranscripts = ArrayDeque<String>()
     private var recognitionIntent: Intent? = null
@@ -698,65 +700,101 @@ class SubtitleSessionService : Service() {
                 systemPrompt = systemPrompt,
             )
 
-        val translated = if (useGlmText) {
-            try {
-                val result = com.livetranslate.app.live.GlmTranslationClient()
-                    .translateTranscriptToThai(
-                        transcript = transcript,
-                        apiKey = glmKey,
-                        previousLines = context,
-                        systemPrompt = systemPrompt,
-                    )
-                if (result.isBlank()) throw IllegalStateException("GLM returned an empty translation")
-                diag("provider", "translation=glm")
+        suspend fun translateWithGeminiFallback(): String {
+            if (geminiKey.isBlank()) {
+                diag("fallback", "gemini key missing; using groq chat")
+                return translateWithGroqFallback()
+            }
+            if (!geminiCircuitBreaker.allowRequest()) {
+                val seconds = (geminiCircuitBreaker.remainingCooldownMs() + 999L) / 1_000L
+                diag("circuit", "gemini open; retry in ${seconds}s; using groq chat")
+                return translateWithGroqFallback()
+            }
+            return try {
+                SessionBus.setStatus(
+                    SessionBus.Status.Running,
+                    "กำลังใช้ Gemini สำรองเพื่อแปลเป็นไทย",
+                )
+                val result = flashTranslationClient.translateTranscriptToThai(
+                    transcript, context, geminiKey, systemPrompt,
+                )
+                if (result.isBlank()) throw IllegalStateException("Gemini returned an empty translation")
+                geminiCircuitBreaker.recordSuccess()
+                diag("provider", "translation=gemini-fallback")
                 result
             } catch (e: CancellationException) {
                 throw e
-            } catch (glmError: Exception) {
-                Log.w(TAG, "GLM failed; trying Gemini Flash fallback: ${glmError.message}")
-                diag("fallback", "glm failed; trying gemini: ${glmError.message}")
-                if (geminiKey.isNotBlank()) {
-                    try {
-                        SessionBus.setStatus(
-                            SessionBus.Status.Running,
-                            "GLM ขัดข้องชั่วคราว · กำลังใช้ Gemini สำรอง",
+            } catch (geminiError: Exception) {
+                geminiCircuitBreaker.recordFailure()
+                Log.w(TAG, "Gemini fallback failed; trying Groq Chat: ${geminiError.message}")
+                diag("fallback", "gemini failed; trying groq chat: ${geminiError.message}")
+                SessionBus.setStatus(
+                    SessionBus.Status.Running,
+                    "Gemini ใช้งานไม่ได้ · กำลังใช้ Groq Chat สำรอง",
+                )
+                translateWithGroqFallback()
+            }
+        }
+
+        val translated = if (useGlmText) {
+            if (!glmCircuitBreaker.allowRequest()) {
+                val seconds = (glmCircuitBreaker.remainingCooldownMs() + 999L) / 1_000L
+                Log.w(TAG, "GLM circuit open; skipping primary for ${seconds}s")
+                diag("circuit", "glm open; retry in ${seconds}s; trying fallback")
+                SessionBus.setStatus(
+                    SessionBus.Status.Running,
+                    "GLM พักชั่วคราว ${seconds} วินาที · กำลังใช้ระบบสำรอง",
+                )
+                translateWithGeminiFallback()
+            } else {
+                try {
+                    val result = com.livetranslate.app.live.GlmTranslationClient()
+                        .translateTranscriptToThai(
+                            transcript = transcript,
+                            apiKey = glmKey,
+                            previousLines = context,
+                            systemPrompt = systemPrompt,
                         )
-                        val result = flashTranslationClient.translateTranscriptToThai(
-                            transcript, context, geminiKey, systemPrompt,
-                        )
-                        if (result.isBlank()) throw IllegalStateException("Gemini returned an empty translation")
-                        diag("provider", "translation=gemini-fallback")
-                        result
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (geminiError: Exception) {
-                        Log.w(TAG, "Gemini fallback failed; trying Groq Chat: ${geminiError.message}")
-                        diag("fallback", "gemini failed; trying groq chat: ${geminiError.message}")
-                        SessionBus.setStatus(
-                            SessionBus.Status.Running,
-                            "GLM และ Gemini ขัดข้อง · กำลังใช้ Groq Chat สำรอง",
-                        )
-                        translateWithGroqFallback()
-                    }
-                } else {
-                    Log.w(TAG, "Gemini key unavailable; using Groq Chat fallback")
-                    diag("fallback", "gemini key missing; using groq chat")
-                    translateWithGroqFallback()
+                    if (result.isBlank()) throw IllegalStateException("GLM returned an empty translation")
+                    glmCircuitBreaker.recordSuccess()
+                    diag("provider", "translation=glm")
+                    result
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (glmError: Exception) {
+                    glmCircuitBreaker.recordFailure()
+                    Log.w(TAG, "GLM failed; trying Gemini Flash fallback: ${glmError.message}")
+                    diag("fallback", "glm failed; trying gemini: ${glmError.message}")
+                    SessionBus.setStatus(
+                        SessionBus.Status.Running,
+                        "GLM ขัดข้อง · กำลังใช้ Gemini สำรอง",
+                    )
+                    translateWithGeminiFallback()
                 }
             }
         } else if (!useGeminiText) {
             translateWithGroqFallback()
         } else {
-            try {
-                flashTranslationClient.translateTranscriptToThai(
-                    transcript, context, geminiKey, systemPrompt,
-                )
-            } catch (e: CancellationException) {
-                throw e
-            } catch (geminiError: Exception) {
-                Log.w(TAG, "Gemini text failed; falling back to Groq Chat: ${geminiError.message}")
-                diag("fallback", "gemini failed; using groq chat: ${geminiError.message}")
+            if (!geminiCircuitBreaker.allowRequest()) {
+                val seconds = (geminiCircuitBreaker.remainingCooldownMs() + 999L) / 1_000L
+                diag("circuit", "gemini open; retry in ${seconds}s; using groq chat")
                 translateWithGroqFallback()
+            } else {
+                try {
+                    val result = flashTranslationClient.translateTranscriptToThai(
+                        transcript, context, geminiKey, systemPrompt,
+                    )
+                    if (result.isBlank()) throw IllegalStateException("Gemini returned an empty translation")
+                    geminiCircuitBreaker.recordSuccess()
+                    result
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (geminiError: Exception) {
+                    geminiCircuitBreaker.recordFailure()
+                    Log.w(TAG, "Gemini text failed; falling back to Groq Chat: ${geminiError.message}")
+                    diag("fallback", "gemini failed; using groq chat: ${geminiError.message}")
+                    translateWithGroqFallback()
+                }
             }
         }
 
