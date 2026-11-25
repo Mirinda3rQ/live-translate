@@ -676,7 +676,11 @@ class SubtitleSessionService : Service() {
                 }
             }
             captureStarted = true
-            SessionBus.setStatus(SessionBus.Status.Running, getString(R.string.gemini_flash_test_running))
+            SessionBus.setStatus(
+                SessionBus.Status.Running,
+                if (geminiFlashFallbackActive) "Gemini Flash กำลังแปลเสียงเป็นไทย (โหมดสำรอง)"
+                else getString(R.string.gemini_flash_test_running),
+            )
         } catch (e: Exception) {
             Log.e(TAG, "Flash audio capture failed", e)
             stopEverything(e.message ?: AppStrings.get(R.string.error_capture_start_failed), error = true)
