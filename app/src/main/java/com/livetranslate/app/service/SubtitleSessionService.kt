@@ -1236,7 +1236,6 @@ class SubtitleSessionService : Service() {
         reconnectJob?.cancel(); reconnectJob = null
         reconnectAttempts = 0
         captureStarted = false
-        geminiFlashFallbackActive = false
 
         // 2) Clear what is on screen (fullInput/fullOutput stay for the export).
         previewFlushJob?.cancel(); previewFlushJob = null
@@ -1408,7 +1407,6 @@ class SubtitleSessionService : Service() {
         private const val TAG = "SubtitleSessionService"
         private const val NOTIFICATION_ID = 42
         private const val PREVIEW_THROTTLE_MS = 200L
-        private const val GEMINI_LIVE_SETUP_TIMEOUT_MS = 15_000L
         private const val MAX_RECONNECTS = 6
         private const val RECONNECT_BASE_DELAY_MS = 1_500L
         private const val RECOGNITION_RESTART_DELAY_MS = 350L
