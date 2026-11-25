@@ -211,9 +211,12 @@ class SubtitleSessionService : Service() {
         data: Intent?,
     ) {
         currentSettings = app.settingsRepository.settings.first()
-        val hasProviderKey = if (currentSettings.translationProvider == TranslationProvider.GROQ) {
-            app.apiKeyStore.getGroqApiKey().isNotBlank()
-        } else app.apiKeyStore.hasApiKey()
+        val hasProviderKey = when (currentSettings.translationProvider) {
+            TranslationProvider.GROQ -> app.apiKeyStore.getGroqApiKey().isNotBlank()
+            TranslationProvider.GLM -> app.apiKeyStore.getGroqApiKey().isNotBlank() &&
+                app.apiKeyStore.hasGlmApiKey()
+            TranslationProvider.GEMINI -> app.apiKeyStore.hasApiKey()
+        }
         if (!hasProviderKey) {
             SessionBus.setStatus(SessionBus.Status.Error, AppStrings.get(R.string.msg_need_api_key))
             stopSelf()
@@ -284,7 +287,7 @@ class SubtitleSessionService : Service() {
             val client = LiveTranslateClient()
             liveClient = client
 
-            val player = if (currentSettings.translationProvider == TranslationProvider.GROQ || currentSettings.geminiFlashTestMode) null else TranslatedAudioPlayer()
+            val player = if (currentSettings.translationProvider != TranslationProvider.GEMINI || currentSettings.geminiFlashTestMode) null else TranslatedAudioPlayer()
             audioPlayer = player
             applyTranslatedAudioEnabled()
             player?.setVolume(currentSettings.translatedVolume)
@@ -401,7 +404,7 @@ class SubtitleSessionService : Service() {
             yield()
             currentCoroutineContext().ensureActive()
             // Select credentials for the chosen provider.
-            val key = if (currentSettings.translationProvider == TranslationProvider.GROQ) {
+            val key = if (currentSettings.translationProvider != TranslationProvider.GEMINI) {
                 app.apiKeyStore.getGroqApiKey()
             } else app.apiKeyStore.nextRotatedKey()
             if (key.isBlank()) {
@@ -409,9 +412,14 @@ class SubtitleSessionService : Service() {
                 stopEverything(AppStrings.get(R.string.msg_need_api_key), error = true)
                 return
             }
-            if (currentSettings.translationProvider == TranslationProvider.GROQ) {
+            if (currentSettings.translationProvider != TranslationProvider.GEMINI) {
                 startFlashAudioCapture(key)
-                SessionBus.setStatus(SessionBus.Status.Running, "Groq กำลังแปลเสียงเป็นภาษาไทย")
+                SessionBus.setStatus(
+                    SessionBus.Status.Running,
+                    if (currentSettings.translationProvider == TranslationProvider.GLM)
+                        "Groq Whisper กำลังถอดเสียง · GLM กำลังแปลเป็นไทย"
+                    else "Groq กำลังแปลเสียงเป็นภาษาไทย",
+                )
                 return
             }
             if (currentSettings.geminiFlashTestMode) {
@@ -457,8 +465,10 @@ class SubtitleSessionService : Service() {
                 translationMutex.withLock {
                     if (!stopping) {
                         try {
-                            val translated = if (currentSettings.translationProvider == TranslationProvider.GROQ) {
+                            val translated = if (currentSettings.translationProvider != TranslationProvider.GEMINI) {
                                 val geminiKey = app.apiKeyStore.nextRotatedKey()
+                                val glmKey = app.apiKeyStore.getGlmApiKey()
+                                val useGlmText = currentSettings.translationProvider == TranslationProvider.GLM
                                 val nowMs = android.os.SystemClock.elapsedRealtime()
                                 val translateWithGemini = suspend {
                                     flashTranslationClient.translateAudioToThai(
@@ -496,6 +506,8 @@ class SubtitleSessionService : Service() {
                                                     speechModel = app.apiKeyStore.getGroqSpeechModel(),
                                                     systemPrompt = currentSettings.effectiveCustomPrompt,
                                                     useGeminiText = useHybrid,
+                                                    useGlmText = useGlmText,
+                                                    glmKey = glmKey,
                                                     groqChatModel = groqChatModel,
                                                 )
                                                 break
@@ -668,12 +680,35 @@ class SubtitleSessionService : Service() {
         speechModel: String,
         systemPrompt: String,
         useGeminiText: Boolean = true,
+        useGlmText: Boolean = false,
+        glmKey: String = "",
         groqChatModel: String = GroqTranslationClient.DEFAULT_CHAT_MODEL,
     ): String {
         val transcript = groqTranslationClient.transcribePcm(pcm, groqKey, speechModel)
         if (transcript.isBlank()) return ""
         val context = recentTranscripts.toList()
-        val translated = if (!useGeminiText) {
+        val translated = if (useGlmText) {
+            try {
+                com.livetranslate.app.live.GlmTranslationClient().translateTranscriptToThai(
+                    transcript = transcript,
+                    apiKey = glmKey,
+                    previousLines = context,
+                    systemPrompt = systemPrompt,
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "GLM text translation failed; falling back to Groq chat: ${e.message}")
+                diag("fallback", "glm text failed, using groq chat: ${e.message}")
+                groqTranslationClient.translateTranscriptToThai(
+                    transcript = transcript,
+                    apiKey = groqKey,
+                    chatModel = GroqTranslationClient.DEFAULT_CHAT_MODEL,
+                    previousLines = context,
+                    systemPrompt = systemPrompt,
+                )
+            }
+        } else if (!useGeminiText) {
             groqTranslationClient.translateTranscriptToThai(
                 transcript = transcript,
                 apiKey = groqKey,
