@@ -687,8 +687,15 @@ class SubtitleSessionService : Service() {
         glmKey: String = "",
         groqChatModel: String = GroqTranslationClient.DEFAULT_CHAT_MODEL,
     ): String {
+        val pipelineStartedAt = android.os.SystemClock.elapsedRealtime()
+        val whisperStartedAt = pipelineStartedAt
         val transcript = groqTranslationClient.transcribePcm(pcm, groqKey, speechModel)
-        if (transcript.isBlank()) return ""
+        val whisperElapsedMs = android.os.SystemClock.elapsedRealtime() - whisperStartedAt
+        diag("latency", "stage=whisper ms=$whisperElapsedMs pcm_ms=${pcm.size / 32}")
+        if (transcript.isBlank()) {
+            diag("latency", "stage=hybrid-empty total_ms=${android.os.SystemClock.elapsedRealtime() - pipelineStartedAt}")
+            return ""
+        }
         val context = recentTranscripts.toList()
 
         suspend fun translateWithGroqFallback(): String =
@@ -748,6 +755,7 @@ class SubtitleSessionService : Service() {
                 translateWithGeminiFallback()
             } else {
                 try {
+                    val glmStartedAt = android.os.SystemClock.elapsedRealtime()
                     val result = com.livetranslate.app.live.GlmTranslationClient()
                         .translateTranscriptToThai(
                             transcript = transcript,
@@ -755,6 +763,11 @@ class SubtitleSessionService : Service() {
                             previousLines = context,
                             systemPrompt = systemPrompt,
                         )
+                    val glmElapsedMs = android.os.SystemClock.elapsedRealtime() - glmStartedAt
+                    diag(
+                        "latency",
+                        "stage=glm ms=$glmElapsedMs whisper_ms=$whisperElapsedMs total_ms=${android.os.SystemClock.elapsedRealtime() - pipelineStartedAt} chars=${transcript.length}",
+                    )
                     if (result.isBlank()) throw IllegalStateException("GLM returned an empty translation")
                     glmCircuitBreaker.recordSuccess()
                     diag("provider", "translation=glm")
