@@ -8,7 +8,11 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
+import java.net.SocketException
 import java.util.concurrent.TimeUnit
+import okhttp3.Protocol
+import okhttp3.Response
 
 /** OpenAI-compatible OneAI GLM text translator. Audio transcription remains on Groq Whisper. */
 class GlmTranslationClient(
@@ -51,7 +55,7 @@ class GlmTranslationClient(
             .post(body)
             .build()
 
-        httpClient.newCall(request).execute().use { response ->
+        executeWithProtocolFallback(request).use { response ->
             val responseBody = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
                 val detail = runCatching {
@@ -116,6 +120,33 @@ class GlmTranslationClient(
         }
     }
 
+
+    /**
+     * Some mobile networks/proxies terminate HTTP/2 connections unexpectedly.
+     * Retry once over HTTP/1.1 only for transport-level I/O failures; never
+     * retry authentication, model, or other HTTP responses.
+     */
+    private fun executeWithProtocolFallback(request: Request): Response {
+        try {
+            return httpClient.newCall(request).execute()
+        } catch (first: IOException) {
+            try {
+                return http1Client.newCall(request).execute()
+            } catch (second: IOException) {
+                second.addSuppressed(first)
+                val reason = when {
+                    second is SocketException || first is SocketException ->
+                        "เครือข่ายตัดการเชื่อมต่อ (Socket). ตรวจอินเทอร์เน็ต, Private DNS หรือ VPN แล้วลองใหม่"
+                    second.message?.contains("timeout", ignoreCase = true) == true ||
+                        first.message?.contains("timeout", ignoreCase = true) == true ->
+                        "หมดเวลารอการเชื่อมต่อ OneAI. ตรวจเครือข่ายแล้วลองใหม่"
+                    else -> "เชื่อมต่อ OneAI ไม่สำเร็จ (" + second.javaClass.simpleName + "). ตรวจอินเทอร์เน็ต, Private DNS หรือ VPN"
+                }
+                throw IOException(reason, second)
+            }
+        }
+    }
+
     private fun looksLikeRefusal(text: String): Boolean =
         REFUSAL_PATTERNS.any { it.containsMatchIn(text) }
 
@@ -129,9 +160,18 @@ class GlmTranslationClient(
             Regex("ขออภัย.{0,30}(ไม่สามารถ|ช่วย)"),
         )
         private val httpClient = OkHttpClient.Builder()
-            .connectTimeout(20, TimeUnit.SECONDS)
+            .connectTimeout(25, TimeUnit.SECONDS)
             .readTimeout(45, TimeUnit.SECONDS)
             .callTimeout(60, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .build()
+
+        private val http1Client = OkHttpClient.Builder()
+            .protocols(listOf(Protocol.HTTP_1_1))
+            .connectTimeout(25, TimeUnit.SECONDS)
+            .readTimeout(45, TimeUnit.SECONDS)
+            .callTimeout(60, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
             .build()
     }
 }
