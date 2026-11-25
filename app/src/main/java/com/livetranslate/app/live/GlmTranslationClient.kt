@@ -107,7 +107,7 @@ class GlmTranslationClient(
                 .header("Content-Type", "application/json")
                 .post(body)
                 .build()
-            httpClient.newCall(request).execute().use { response ->
+            executeWithProtocolFallback(request).use { response ->
                 val text = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
                     val detail = runCatching {
