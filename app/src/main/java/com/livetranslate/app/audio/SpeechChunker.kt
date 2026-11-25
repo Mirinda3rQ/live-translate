@@ -13,10 +13,10 @@ import java.io.ByteArrayOutputStream
  */
 class SpeechChunker(
     private val minSpeechBytes: Int = 16_000,    // 0.5 s: shortest chunk worth transcribing
-    private val minChunkBytes: Int = 48_000,     // 1.5 s
-    private val pauseBytes: Int = 12_800,        // 0.4 s of silence ends a phrase
-    private val longPauseBytes: Int = 32_000,    // 1.0 s of silence flushes short utterances
-    private val maxChunkBytes: Int = 128_000,    // 4 s hard cap
+    private val minChunkBytes: Int = 24_000,     // 0.75 s
+    private val pauseBytes: Int = 8_000,         // 0.25 s of silence ends a phrase
+    private val longPauseBytes: Int = 16_000,    // 0.5 s of silence flushes short utterances
+    private val maxChunkBytes: Int = 64_000,     // 2 s hard cap
 ) {
     private val buffer = ByteArrayOutputStream()
     private var silentBytes = 0
