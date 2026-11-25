@@ -126,7 +126,7 @@ class GlmTranslationClient(
         private val REFUSAL_PATTERNS = listOf(
             Regex("(?i)^\\s*(i'?m sorry|i am sorry|sorry,|i apologize|i cannot|i can't)"),
             Regex("(?i)\\b(as an ai|unable to assist|cannot help with)"),
-            Regex("ขออภัย.{0,30}(ไม่สามารถ|ช่วย)",
+            Regex("ขออภัย.{0,30}(ไม่สามารถ|ช่วย)"),
         )
         private val httpClient = OkHttpClient.Builder()
             .connectTimeout(20, TimeUnit.SECONDS)
