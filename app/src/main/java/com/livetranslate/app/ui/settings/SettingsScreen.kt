@@ -79,6 +79,7 @@ fun SettingsScreen(
     val groqApiKeyFields by viewModel.groqApiKeyFields.collectAsStateWithLifecycle()
     val groqChatModel by viewModel.groqChatModel.collectAsStateWithLifecycle()
     val groqSpeechModel by viewModel.groqSpeechModel.collectAsStateWithLifecycle()
+    val glmApiKey by viewModel.glmApiKey.collectAsStateWithLifecycle()
     val testResult by viewModel.testResult.collectAsStateWithLifecycle()
     val testing by viewModel.testing.collectAsStateWithLifecycle()
 
@@ -90,6 +91,7 @@ fun SettingsScreen(
     }
     var revealKey by remember { mutableStateOf(false) }
     var revealGroqKey by remember { mutableStateOf(false) }
+    var revealGlmKey by remember { mutableStateOf(false) }
     var advancedOpen by remember { mutableStateOf(false) }
     var customPromptDraft by remember { mutableStateOf(settings.customPrompt) }
     LaunchedEffect(settings.customPrompt) { customPromptDraft = settings.customPrompt }
@@ -110,9 +112,10 @@ fun SettingsScreen(
     }
 
     val fieldColors = appFieldColors()
-    val isGroq = settings.translationProvider == TranslationProvider.GROQ
+    val isGroq = settings.translationProvider != TranslationProvider.GEMINI
     val hasGeminiKey = apiKeyFields.any { it.text.isNotBlank() }
     val hasGroqKey = groqApiKeyFields.any { it.text.isNotBlank() }
+    val hasGlmKey = glmApiKey.isNotBlank()
 
     Column(
         modifier = modifier
@@ -138,7 +141,7 @@ fun SettingsScreen(
                     ChoiceTile(
                         title = "Gemini Live",
                         description = "แปลสดต่อเนื่อง",
-                        selected = !isGroq,
+                        selected = settings.translationProvider == TranslationProvider.GEMINI,
                         modifier = Modifier.weight(1f),
                     ) {
                         viewModel.clearTestResult()
@@ -147,24 +150,40 @@ fun SettingsScreen(
                     ChoiceTile(
                         title = "Groq",
                         description = "ถอดเสียงทีละช่วง แล้วแปล",
-                        selected = isGroq,
+                        selected = settings.translationProvider == TranslationProvider.GROQ,
                         modifier = Modifier.weight(1f),
                     ) {
                         viewModel.clearTestResult()
                         viewModel.update { it.copy(translationProvider = TranslationProvider.GROQ) }
                     }
+                    ChoiceTile(
+                        title = "GLM",
+                        description = "Groq Whisper + GLM แปลข้อความ",
+                        selected = settings.translationProvider == TranslationProvider.GLM,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        viewModel.clearTestResult()
+                        viewModel.update { it.copy(translationProvider = TranslationProvider.GLM) }
+                    }
                 }
-                val ready = if (isGroq) hasGroqKey else hasGeminiKey
+                val ready = when (settings.translationProvider) {
+                    TranslationProvider.GEMINI -> hasGeminiKey
+                    TranslationProvider.GROQ -> hasGroqKey
+                    TranslationProvider.GLM -> hasGroqKey && hasGlmKey
+                }
                 StatusPill(
-                    label = when {
-                        ready && isGroq -> "พร้อมใช้งาน · มี Groq key แล้ว"
-                        ready -> "พร้อมใช้งาน · มี Gemini key แล้ว"
-                        isGroq -> "ยังไม่ได้ใส่ Groq API key"
-                        else -> "ยังไม่ได้ใส่ Gemini API key"
+                    label = when (settings.translationProvider) {
+                        TranslationProvider.GEMINI -> if (ready) "พร้อมใช้งาน · มี Gemini key แล้ว" else "ยังไม่ได้ใส่ Gemini API key"
+                        TranslationProvider.GROQ -> if (ready) "พร้อมใช้งาน · มี Groq key แล้ว" else "ยังไม่ได้ใส่ Groq API key"
+                        TranslationProvider.GLM -> when {
+                            ready -> "พร้อมใช้งาน · มี Groq และ GLM keys แล้ว"
+                            !hasGroqKey -> "ยังไม่ได้ใส่ Groq API key สำหรับ Whisper"
+                            else -> "ยังไม่ได้ใส่ GLM API key"
+                        }
                     },
                     tone = if (ready) StatusTone.Ok else StatusTone.Warn,
                 )
-                if (isGroq) {
+                if (settings.translationProvider == TranslationProvider.GROQ) {
                     Hint(
                         if (hasGeminiKey) {
                             "มี Gemini เป็นตัวสำรอง จะสลับให้อัตโนมัติเมื่อ Groq เต็มโควตา หรือโมเดลปฏิเสธเนื้อหา"
@@ -268,6 +287,44 @@ fun SettingsScreen(
             }
         }
 
+        if (settings.translationProvider == TranslationProvider.GLM) {
+            SectionTitle("GLM API Key")
+            SectionCard {
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Hint("ใช้ GLM แปลข้อความที่ถอดเสียงด้วย Groq Whisper")
+                    Hint("Base URL: https://api.oneaiapikey.com/v1")
+                    Hint("Model: dealignai-glm-5.3-flash-uncensored-fp8:free")
+                    OutlinedTextField(
+                        value = glmApiKey,
+                        onValueChange = viewModel::updateGlmApiKey,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { androidx.compose.material3.Text("OneAI GLM API Key") },
+                        singleLine = true,
+                        visualTransformation = if (revealGlmKey) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = fieldColors,
+                    )
+                    TextButton(
+                        text = if (revealGlmKey) "ซ่อน API Key" else "แสดง API Key",
+                        onClick = { revealGlmKey = !revealGlmKey },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Button(
+                        onClick = viewModel::testGlmConnection,
+                        enabled = !testing && glmApiKey.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColorsPrimary(),
+                    ) {
+                        Text(if (testing) "กำลังทดสอบ..." else "บันทึกและทดสอบ GLM", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+
         // ---------------------------------------------------------------- Provider fallback
         if (isGroq) {
             SectionTitle("Gemini สำรองอัตโนมัติ")
@@ -329,7 +386,9 @@ fun SettingsScreen(
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                     GroupLabel("แปลภาษา (Text LLM)")
-                    listOf(
+                    if (settings.translationProvider == TranslationProvider.GLM) {
+                        Hint("GLM: dealignai-glm-5.3-flash-uncensored-fp8:free · แปลจากข้อความที่ Groq Whisper ถอดเสียง")
+                    } else listOf(
                         Triple("gemini-hybrid", "Gemini แปลจากข้อความ (แนะนำ)", "ภาษาไทยลื่นสุด ใช้ประโยคก่อนหน้าเป็นบริบท ต้องมี Gemini key"),
                         Triple("openai/gpt-oss-120b", "GPT-OSS 120B", "คุณภาพและเข้าใจบริบทดี"),
                         Triple("openai/gpt-oss-20b", "GPT-OSS 20B", "เร็วกว่า"),
