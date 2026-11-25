@@ -116,6 +116,8 @@ fun SettingsScreen(
     val hasGeminiKey = apiKeyFields.any { it.text.isNotBlank() }
     val hasGroqKey = groqApiKeyFields.any { it.text.isNotBlank() }
     val hasGlmKey = glmApiKey.isNotBlank()
+    val hybridGeminiSelected = settings.translationProvider == TranslationProvider.GROQ &&
+        groqChatModel == "gemini-hybrid"
 
     Column(
         modifier = modifier
@@ -168,8 +170,6 @@ fun SettingsScreen(
                         viewModel.update { it.copy(translationProvider = TranslationProvider.GLM) }
                     }
                 }
-                val hybridGeminiSelected = settings.translationProvider == TranslationProvider.GROQ &&
-                    groqChatModel == "gemini-hybrid"
                 val ready = when (settings.translationProvider) {
                     TranslationProvider.GEMINI -> hasGeminiKey
                     TranslationProvider.GROQ -> hasGroqKey && (!hybridGeminiSelected || hasGeminiKey)
