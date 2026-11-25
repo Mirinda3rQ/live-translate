@@ -668,10 +668,11 @@ class SubtitleSessionService : Service() {
     }
 
     /**
-     * Hybrid Groq mode: Groq Whisper transcribes the chunk, Gemini translates the text into Thai
-     * using the last few source lines as context. If Gemini fails, Groq's default chat model
-     * translates the same transcript so the caption is not lost. Always called under
-     * [translationMutex], so [recentTranscripts] needs no extra locking.
+     * Hybrid mode: Groq Whisper transcribes each media chunk, then text translation
+     * follows the configured provider priority. GLM uses Gemini Flash as the first
+     * independent fallback and Groq Chat as the final fallback. The audio capture,
+     * MediaProjection token, and overlay are never restarted by translation failover.
+     * Always called under [translationMutex], so [recentTranscripts] needs no extra locking.
      */
     private suspend fun translateHybrid(
         pcm: ByteArray,
@@ -687,28 +688,8 @@ class SubtitleSessionService : Service() {
         val transcript = groqTranslationClient.transcribePcm(pcm, groqKey, speechModel)
         if (transcript.isBlank()) return ""
         val context = recentTranscripts.toList()
-        val translated = if (useGlmText) {
-            try {
-                com.livetranslate.app.live.GlmTranslationClient().translateTranscriptToThai(
-                    transcript = transcript,
-                    apiKey = glmKey,
-                    previousLines = context,
-                    systemPrompt = systemPrompt,
-                )
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.w(TAG, "GLM text translation failed; falling back to Groq chat: ${e.message}")
-                diag("fallback", "glm text failed, using groq chat: ${e.message}")
-                groqTranslationClient.translateTranscriptToThai(
-                    transcript = transcript,
-                    apiKey = groqKey,
-                    chatModel = GroqTranslationClient.DEFAULT_CHAT_MODEL,
-                    previousLines = context,
-                    systemPrompt = systemPrompt,
-                )
-            }
-        } else if (!useGeminiText) {
+
+        suspend fun translateWithGroqFallback(): String =
             groqTranslationClient.translateTranscriptToThai(
                 transcript = transcript,
                 apiKey = groqKey,
@@ -716,24 +697,72 @@ class SubtitleSessionService : Service() {
                 previousLines = context,
                 systemPrompt = systemPrompt,
             )
-        } else try {
-            flashTranslationClient.translateTranscriptToThai(transcript, context, geminiKey, systemPrompt)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.w(TAG, "Gemini text translation failed; falling back to Groq chat: ${e.message}")
-            diag("fallback", "gemini text failed, using groq chat: ${e.message}")
-            groqTranslationClient.translateTranscriptToThai(
-                transcript = transcript,
-                apiKey = groqKey,
-                chatModel = GroqTranslationClient.DEFAULT_CHAT_MODEL,
-                previousLines = context,
-                systemPrompt = systemPrompt,
-            )
+
+        val translated = if (useGlmText) {
+            try {
+                val result = com.livetranslate.app.live.GlmTranslationClient()
+                    .translateTranscriptToThai(
+                        transcript = transcript,
+                        apiKey = glmKey,
+                        previousLines = context,
+                        systemPrompt = systemPrompt,
+                    )
+                if (result.isBlank()) throw IllegalStateException("GLM returned an empty translation")
+                diag("provider", "translation=glm")
+                result
+            } catch (e: CancellationException) {
+                throw e
+            } catch (glmError: Exception) {
+                Log.w(TAG, "GLM failed; trying Gemini Flash fallback: ${glmError.message}")
+                diag("fallback", "glm failed; trying gemini: ${glmError.message}")
+                if (geminiKey.isNotBlank()) {
+                    try {
+                        SessionBus.setStatus(
+                            SessionBus.Status.Running,
+                            "GLM ขัดข้องชั่วคราว · กำลังใช้ Gemini สำรอง",
+                        )
+                        val result = flashTranslationClient.translateTranscriptToThai(
+                            transcript, context, geminiKey, systemPrompt,
+                        )
+                        if (result.isBlank()) throw IllegalStateException("Gemini returned an empty translation")
+                        diag("provider", "translation=gemini-fallback")
+                        result
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (geminiError: Exception) {
+                        Log.w(TAG, "Gemini fallback failed; trying Groq Chat: ${geminiError.message}")
+                        diag("fallback", "gemini failed; trying groq chat: ${geminiError.message}")
+                        SessionBus.setStatus(
+                            SessionBus.Status.Running,
+                            "GLM และ Gemini ขัดข้อง · กำลังใช้ Groq Chat สำรอง",
+                        )
+                        translateWithGroqFallback()
+                    }
+                } else {
+                    Log.w(TAG, "Gemini key unavailable; using Groq Chat fallback")
+                    diag("fallback", "gemini key missing; using groq chat")
+                    translateWithGroqFallback()
+                }
+            }
+        } else if (!useGeminiText) {
+            translateWithGroqFallback()
+        } else {
+            try {
+                flashTranslationClient.translateTranscriptToThai(
+                    transcript, context, geminiKey, systemPrompt,
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (geminiError: Exception) {
+                Log.w(TAG, "Gemini text failed; falling back to Groq Chat: ${geminiError.message}")
+                diag("fallback", "gemini failed; using groq chat: ${geminiError.message}")
+                translateWithGroqFallback()
+            }
         }
+
         diag("hybrid", "src=\"${transcript.take(120)}\" th=\"${translated.take(120)}\" via=" +
             when {
-                useGlmText -> "glm-text"
+                useGlmText -> "glm-primary-with-failover"
                 useGeminiText -> "gemini-text"
                 else -> "groq-chat"
             })
