@@ -83,7 +83,21 @@ class ApiKeyStore(context: Context) {
 
     fun hasGlmApiKey(): Boolean = getGlmApiKey().isNotBlank()
 
-    fun getGroqChatModel(): String = prefs.getString(KEY_GROQ_CHAT_MODEL, DEFAULT_GROQ_CHAT_MODEL).orEmpty()
+    /**
+     * Restore the established Groq Whisper -> Gemini Flash translation pairing for users
+     * who were still on the previous implicit GPT-OSS default. Explicit non-default choices
+     * (for example GPT-OSS 20B or Qwen) remain untouched.
+     */
+    fun getGroqChatModel(): String {
+        val stored = prefs.getString(KEY_GROQ_CHAT_MODEL, null)
+        return if (stored.isNullOrBlank() || stored == LEGACY_DEFAULT_GROQ_CHAT_MODEL) {
+            prefs.edit().putString(KEY_GROQ_CHAT_MODEL, DEFAULT_GROQ_CHAT_MODEL).apply()
+            DEFAULT_GROQ_CHAT_MODEL
+        } else {
+            stored
+        }
+    }
+
     fun setGroqChatModel(value: String) {
         prefs.edit().putString(KEY_GROQ_CHAT_MODEL, value).apply()
     }
@@ -172,7 +186,8 @@ class ApiKeyStore(context: Context) {
         private const val KEY_GROQ_API_LIST = "groq_api_key_list"
         private const val KEY_GROQ_CHAT_MODEL = "groq_chat_model"
         private const val KEY_GROQ_SPEECH_MODEL = "groq_speech_model"
-        const val DEFAULT_GROQ_CHAT_MODEL = "openai/gpt-oss-120b"
+        private const val LEGACY_DEFAULT_GROQ_CHAT_MODEL = "openai/gpt-oss-120b"
+        const val DEFAULT_GROQ_CHAT_MODEL = "gemini-hybrid"
         const val DEFAULT_GROQ_SPEECH_MODEL = "whisper-large-v3-turbo"
         const val MAX_KEYS = 10
         const val MAX_GROQ_KEYS = 5
