@@ -477,12 +477,12 @@ class SubtitleSessionService : Service() {
                                         apiKey = geminiKey,
                                     )
                                 }
-                                if (geminiKey.isNotBlank() && nowMs < groqCooldownUntilMs) {
+                                if (!useGlmText && geminiKey.isNotBlank() && nowMs < groqCooldownUntilMs) {
                                     translateWithGemini()
                                 } else {
                                     try {
                                         val groqChatModel = app.apiKeyStore.getGroqChatModel()
-                                        val useHybrid = groqChatModel == GroqTranslationClient.HYBRID_GEMINI_MODEL &&
+                                        val useHybrid = !useGlmText && groqChatModel == GroqTranslationClient.HYBRID_GEMINI_MODEL &&
                                             geminiKey.isNotBlank()
                                         if (useHybrid && !hybridStatusShown) {
                                             hybridStatusShown = true
@@ -732,7 +732,11 @@ class SubtitleSessionService : Service() {
             )
         }
         diag("hybrid", "src=\"${transcript.take(120)}\" th=\"${translated.take(120)}\" via=" +
-            (if (useGeminiText) "gemini-text" else "groq-chat"))
+            when {
+                useGlmText -> "glm-text"
+                useGeminiText -> "gemini-text"
+                else -> "groq-chat"
+            })
         recentTranscripts.addLast(transcript)
         while (recentTranscripts.size > HYBRID_CONTEXT_LINES) recentTranscripts.removeFirst()
         // Show the source line too (visible when bilingual captions are on).
