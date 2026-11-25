@@ -14,6 +14,7 @@ import android.graphics.PixelFormat
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -573,7 +574,7 @@ class SubtitleOverlayController(
             tint: Int = Color.argb(46, 255, 255, 255),
             onClick: (TextView) -> Unit,
         ): TextView = TextView(context).apply {
-            val size = (36 * density).roundToInt()
+            val size = (40 * density).roundToInt()
             layoutParams = LinearLayout.LayoutParams(size, size).apply {
                 marginStart = (2 * density).roundToInt()
                 marginEnd = (2 * density).roundToInt()
@@ -584,10 +585,16 @@ class SubtitleOverlayController(
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             includeFontPadding = false
-            background = GradientDrawable().apply {
+            val buttonShape = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(tint)
+                setStroke(max(1, (1 * density).roundToInt()), Color.argb(42, 255, 255, 255))
             }
+            background = RippleDrawable(
+                ColorStateList.valueOf(Color.argb(72, 255, 255, 255)),
+                buttonShape,
+                null,
+            )
             contentDescription = description
             setOnClickListener {
                 suppressNextToggle = true
