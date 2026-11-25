@@ -74,6 +74,15 @@ class ApiKeyStore(context: Context) {
         return keys.drop(start) + keys.take(start)
     }
 
+    /** GLM text-translation credential, stored in the same encrypted preferences. */
+    fun getGlmApiKey(): String = prefs.getString(KEY_GLM_API, "").orEmpty()
+
+    fun setGlmApiKey(value: String) {
+        prefs.edit().putString(KEY_GLM_API, value.trim()).apply()
+    }
+
+    fun hasGlmApiKey(): Boolean = getGlmApiKey().isNotBlank()
+
     fun getGroqChatModel(): String = prefs.getString(KEY_GROQ_CHAT_MODEL, DEFAULT_GROQ_CHAT_MODEL).orEmpty()
     fun setGroqChatModel(value: String) {
         prefs.edit().putString(KEY_GROQ_CHAT_MODEL, value).apply()
@@ -159,6 +168,7 @@ class ApiKeyStore(context: Context) {
         private const val KEY_API = "api_key"
         private const val KEY_API_LIST = "api_key_list"
         private const val KEY_GROQ_API = "groq_api_key"
+        private const val KEY_GLM_API = "glm_api_key"
         private const val KEY_GROQ_API_LIST = "groq_api_key_list"
         private const val KEY_GROQ_CHAT_MODEL = "groq_chat_model"
         private const val KEY_GROQ_SPEECH_MODEL = "groq_speech_model"
