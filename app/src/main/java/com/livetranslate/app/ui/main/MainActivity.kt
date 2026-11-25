@@ -155,10 +155,11 @@ class MainActivity : ComponentActivity() {
 
                 fun requestStartSubtitle() {
                     try {
-                        val hasProviderKey = if (settings.translationProvider == TranslationProvider.GROQ) {
-                            app.apiKeyStore.getGroqApiKey().isNotBlank()
-                        } else {
-                            app.apiKeyStore.hasApiKey()
+                        val hasProviderKey = when (settings.translationProvider) {
+                            TranslationProvider.GEMINI -> app.apiKeyStore.hasApiKey()
+                            TranslationProvider.GROQ -> app.apiKeyStore.getGroqApiKey().isNotBlank()
+                            TranslationProvider.GLM -> app.apiKeyStore.getGroqApiKey().isNotBlank() &&
+                                app.apiKeyStore.hasGlmApiKey()
                         }
                         if (!hasProviderKey) {
                             SessionBus.setStatus(
