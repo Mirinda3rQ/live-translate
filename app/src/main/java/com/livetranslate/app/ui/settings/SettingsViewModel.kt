@@ -99,6 +99,28 @@ class SettingsViewModel(
         clearTestResult()
     }
 
+    private val _glmApiKey = MutableStateFlow(apiKeyStore.getGlmApiKey())
+    val glmApiKey: StateFlow<String> = _glmApiKey.asStateFlow()
+
+    fun updateGlmApiKey(value: String) { _glmApiKey.value = value }
+
+    fun saveGlmApiKey() {
+        apiKeyStore.setGlmApiKey(_glmApiKey.value)
+        _testResult.value = "บันทึก GLM API Key แล้ว"
+    }
+
+    fun testGlmConnection() {
+        viewModelScope.launch {
+            _testing.value = true
+            apiKeyStore.setGlmApiKey(_glmApiKey.value)
+            _testResult.value = "กำลังทดสอบ GLM API..."
+            val result = com.livetranslate.app.live.GlmTranslationClient().testConnection(_glmApiKey.value)
+            _testResult.value = if (result.isSuccess) "✅ GLM เชื่อมต่อสำเร็จ" else
+                "❌ GLM เชื่อมต่อไม่สำเร็จ: ${result.exceptionOrNull()?.message.orEmpty()}"
+            _testing.value = false
+        }
+    }
+
     private val _testResult = MutableStateFlow<String?>(null)
     val testResult: StateFlow<String?> = _testResult.asStateFlow()
 
