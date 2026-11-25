@@ -102,6 +102,8 @@ class SubtitleSessionService : Service() {
     private var currentSettings: UserSettings = UserSettings()
     private var audioSourceMode: AudioSourceMode = AudioSourceMode.MEDIA
     private var captureStarted = false
+    /** Prevent duplicate Live-to-Flash fallback when both socket state and error event fire. */
+    private var geminiFlashFallbackActive = false
     private var stopping = false
 
     private var accumulatedInput = StringBuilder()
@@ -184,6 +186,7 @@ class SubtitleSessionService : Service() {
         fullInput.clear()
         fullOutput.clear()
         captureStarted = false
+        geminiFlashFallbackActive = false
         lastPreviewAtMs = 0L
         pendingPreviewInput = null
         pendingPreviewOutput = null
@@ -447,6 +450,17 @@ class SubtitleSessionService : Service() {
                     customPrompt = currentSettings.customPrompt,
                 ),
             )
+            // A Live socket can remain in Connecting without delivering setupComplete.
+            // Do not leave Gemini-only sessions blank indefinitely: switch to the
+            // same Gemini key through the Flash audio path if setup stalls.
+            scope.launch {
+                delay(GEMINI_LIVE_SETUP_TIMEOUT_MS)
+                if (!stopping && !captureStarted &&
+                    client.connectionState.value is LiveTranslateClient.ConnectionState.Connecting
+                ) {
+                    activateGeminiFlashFallback("Gemini Live setup timed out")
+                }
+            }
     }
 
     /** Gemini Flash consumes PCM from the selected capture source, including system Media. */
@@ -936,11 +950,44 @@ class SubtitleSessionService : Service() {
     }
 
     /**
+     * Keep Gemini as the selected provider when Live API setup/connection fails.
+     * Stop the old socket/capture before starting the direct Gemini Flash audio path.
+     */
+    private fun activateGeminiFlashFallback(reason: String): Boolean {
+        if (stopping || restartInProgress || geminiFlashFallbackActive ||
+            currentSettings.translationProvider != TranslationProvider.GEMINI ||
+            currentSettings.geminiFlashTestMode
+        ) return false
+
+        val app = application as LiveTranslateApp
+        val key = app.apiKeyStore.nextRotatedKey()
+        if (key.isBlank()) return false
+
+        geminiFlashFallbackActive = true
+        Log.w(TAG, "Gemini Live unavailable; switching to Gemini Flash audio: $reason")
+        diag("fallback", "gemini-live -> gemini-flash: $reason")
+        reconnectJob?.cancel()
+        reconnectJob = null
+        liveClient?.close()
+        mediaCapturer?.stop(); mediaCapturer = null
+        micCapturer?.stop(); micCapturer = null
+        pcmMixer?.close(); pcmMixer = null
+        captureStarted = false
+        SessionBus.setStatus(
+            SessionBus.Status.Running,
+            "Gemini Live ไม่ตอบสนอง · สลับไป Gemini Flash อัตโนมัติ",
+        )
+        startFlashAudioCapture(key)
+        return true
+    }
+
+    /**
      * Connection died or the server announced it will die. If the session is
      * resumable and retries remain, reconnect transparently; otherwise stop.
      */
     private fun handleConnectionLoss(message: String) {
         if (stopping || restartInProgress) return
+        if (activateGeminiFlashFallback(message)) return
         val client = liveClient
         // Close 1008 "session not found": the saved resumption handle is stale, so
         // retrying with it can never succeed. Drop it and start a fresh session.
@@ -1236,6 +1283,7 @@ class SubtitleSessionService : Service() {
         reconnectJob?.cancel(); reconnectJob = null
         reconnectAttempts = 0
         captureStarted = false
+        geminiFlashFallbackActive = false
 
         // 2) Clear what is on screen (fullInput/fullOutput stay for the export).
         previewFlushJob?.cancel(); previewFlushJob = null
@@ -1407,6 +1455,7 @@ class SubtitleSessionService : Service() {
         private const val TAG = "SubtitleSessionService"
         private const val NOTIFICATION_ID = 42
         private const val PREVIEW_THROTTLE_MS = 200L
+        private const val GEMINI_LIVE_SETUP_TIMEOUT_MS = 15_000L
         private const val MAX_RECONNECTS = 6
         private const val RECONNECT_BASE_DELAY_MS = 1_500L
         private const val RECOGNITION_RESTART_DELAY_MS = 350L
