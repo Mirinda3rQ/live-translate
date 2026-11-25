@@ -201,12 +201,23 @@ fun SubtitleScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = if (settings.translationProvider.name == "GROQ") "Groq" else "Gemini Live",
+                            text = when (settings.translationProvider) {
+                                com.livetranslate.app.data.TranslationProvider.GEMINI -> "Gemini Live"
+                                com.livetranslate.app.data.TranslationProvider.GROQ -> "Groq"
+                                com.livetranslate.app.data.TranslationProvider.GLM -> "Groq Whisper + GLM"
+                            },
                             fontSize = 16.sp,
                             fontWeight = FontWeight.SemiBold,
                         )
                         Text(
-                            text = "Provider ที่เลือกไว้ในการตั้งค่า",
+                            text = when (settings.translationProvider) {
+                                com.livetranslate.app.data.TranslationProvider.GEMINI ->
+                                    "ตรวจจับเสียงและแปลแบบ Live"
+                                com.livetranslate.app.data.TranslationProvider.GROQ ->
+                                    "Groq Whisper และ Groq Chat"
+                                com.livetranslate.app.data.TranslationProvider.GLM ->
+                                    "ถอดเสียงด้วย Whisper แล้วแปลข้อความด้วย GLM"
+                            },
                             fontSize = 12.sp,
                             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         )
