@@ -1186,18 +1186,23 @@ class SubtitleSessionService : Service() {
         scope.launch {
             delay(300L)
             if (stopping) return@launch
-            val groq = currentSettings.translationProvider == TranslationProvider.GROQ
-            val key = if (groq) app.apiKeyStore.getGroqApiKey() else app.apiKeyStore.nextRotatedKey()
-            if (key.isBlank()) {
+            val groqPipeline = currentSettings.translationProvider != TranslationProvider.GEMINI
+            val key = if (groqPipeline) app.apiKeyStore.getGroqApiKey() else app.apiKeyStore.nextRotatedKey()
+            if (key.isBlank() || (currentSettings.translationProvider == TranslationProvider.GLM &&
+                    !app.apiKeyStore.hasGlmApiKey())) {
                 stopEverything(AppStrings.get(R.string.msg_need_api_key), error = true)
                 return@launch
             }
-            if (groq || currentSettings.geminiFlashTestMode) {
+            if (groqPipeline || currentSettings.geminiFlashTestMode) {
                 startFlashAudioCapture(key)
                 if (!stopping) {
                     SessionBus.setStatus(
                         SessionBus.Status.Running,
-                        if (groq) "Groq กำลังแปลเสียงเป็นภาษาไทย" else getString(R.string.gemini_flash_test_running),
+                        when (currentSettings.translationProvider) {
+                            TranslationProvider.GLM -> "Groq Whisper กำลังถอดเสียง · GLM กำลังแปลเป็นไทย"
+                            TranslationProvider.GROQ -> "Groq กำลังแปลเสียงเป็นภาษาไทย"
+                            TranslationProvider.GEMINI -> getString(R.string.gemini_flash_test_running)
+                        },
                     )
                 }
                 restartInProgress = false
