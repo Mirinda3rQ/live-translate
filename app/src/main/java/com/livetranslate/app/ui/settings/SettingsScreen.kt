@@ -121,8 +121,8 @@ fun SettingsScreen(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         PageTitle(
             title = stringResource(R.string.settings_title),
@@ -137,30 +137,32 @@ fun SettingsScreen(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    ChoiceTile(
-                        title = "Gemini Live",
-                        description = "แปลสดต่อเนื่อง",
-                        selected = settings.translationProvider == TranslationProvider.GEMINI,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        viewModel.clearTestResult()
-                        viewModel.update { it.copy(translationProvider = TranslationProvider.GEMINI) }
-                    }
-                    ChoiceTile(
-                        title = "Groq",
-                        description = "ถอดเสียงทีละช่วง แล้วแปล",
-                        selected = settings.translationProvider == TranslationProvider.GROQ,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        viewModel.clearTestResult()
-                        viewModel.update { it.copy(translationProvider = TranslationProvider.GROQ) }
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        ChoiceTile(
+                            title = "Gemini Live",
+                            description = "แปลสดต่อเนื่อง",
+                            selected = settings.translationProvider == TranslationProvider.GEMINI,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            viewModel.clearTestResult()
+                            viewModel.update { it.copy(translationProvider = TranslationProvider.GEMINI) }
+                        }
+                        ChoiceTile(
+                            title = "Groq",
+                            description = "Whisper + Groq Chat",
+                            selected = settings.translationProvider == TranslationProvider.GROQ,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            viewModel.clearTestResult()
+                            viewModel.update { it.copy(translationProvider = TranslationProvider.GROQ) }
+                        }
                     }
                     ChoiceTile(
                         title = "GLM",
-                        description = "Groq Whisper + GLM แปลข้อความ",
+                        description = "Groq Whisper ถอดเสียง แล้ว GLM แปลข้อความเป็นไทย",
                         selected = settings.translationProvider == TranslationProvider.GLM,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
                         viewModel.clearTestResult()
                         viewModel.update { it.copy(translationProvider = TranslationProvider.GLM) }
