@@ -28,7 +28,6 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.content.res.ColorStateList
 import android.widget.LinearLayout
-import android.widget.PopupMenu
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.Switch
@@ -511,8 +510,9 @@ class SubtitleOverlayController(
         val root = GestureLayout(context)
 
         val bg = GradientDrawable().apply {
-            cornerRadius = 12 * density
-            setColor(Color.argb((settings.backgroundAlpha * 255).toInt().coerceIn(0, 242), 0, 0, 0))
+            cornerRadius = 18 * density
+            setColor(Color.argb((settings.backgroundAlpha * 255).toInt().coerceIn(0, 242), 12, 16, 24))
+            setStroke(max(1, (1 * density).roundToInt()), Color.argb(72, 255, 255, 255))
         }
         root.background = bg
         val padH = (10 * density).roundToInt()
@@ -534,7 +534,7 @@ class SubtitleOverlayController(
         // Control strip: a drag zone on the left and round, easy-to-hit buttons on the
         // right (adjust / app settings / hide captions / restart / close). The whole
         // strip reveals on tap and auto-hides when idle.
-        val rowHeight = (44 * density).roundToInt()
+        val rowHeight = (48 * density).roundToInt()
         grabberRowHeightPx = rowHeight
         val grabberRow = FrameLayout(context).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -573,7 +573,7 @@ class SubtitleOverlayController(
             tint: Int = Color.argb(46, 255, 255, 255),
             onClick: (TextView) -> Unit,
         ): TextView = TextView(context).apply {
-            val size = (32 * density).roundToInt()
+            val size = (36 * density).roundToInt()
             layoutParams = LinearLayout.LayoutParams(size, size).apply {
                 marginStart = (2 * density).roundToInt()
                 marginEnd = (2 * density).roundToInt()
@@ -605,33 +605,15 @@ class SubtitleOverlayController(
         settingsButton = gear
         strip.addView(gear)
 
-        // Restart: tap = restart translation only, long-press = relaunch the app.
+        // One tap immediately restarts translation in-place. No popup/menu is shown;
+        // the existing overlay window and MediaProjection grant remain active.
         val restart = roundButton(
             "↻",
-            17f,
-            "ตัวเลือกการเริ่มใหม่: เลือกรีสตาร์ทการแปลหรือเริ่มแอปใหม่",
-            tint = Color.argb(110, 52, 130, 255),
-        ) { button ->
-            val menu = PopupMenu(context, button)
-            menu.menu.add("เริ่มการแปลใหม่ (คงหน้าต่างและสิทธิ์จับเสียงเดิม)")
-                .setOnMenuItemClickListener {
-                    onRestartRequested()
-                    true
-                }
-            menu.menu.add("เริ่มแอปใหม่ (ขอสิทธิ์จับเสียงอีกครั้ง)")
-                .setOnMenuItemClickListener {
-                    onRestartAppRequested()
-                    true
-                }
-            menu.show()
-        }.apply {
-            // Keep the shortcut for experienced users; the same action is now
-            // also discoverable from the tap menu.
-            setOnLongClickListener {
-                suppressNextToggle = true
-                onRestartAppRequested()
-                true
-            }
+            18f,
+            "เริ่มการแปลใหม่ทันที โดยคงหน้าต่างและสิทธิ์จับเสียงเดิม",
+            tint = Color.argb(170, 42, 112, 230),
+        ) {
+            onRestartRequested()
         }
         strip.addView(restart)
 
@@ -998,9 +980,9 @@ class SubtitleOverlayController(
         return panel
     }
 
-    /** Groq and Gemini Flash test mode only produce text, so the voice controls are hidden. */
+    /** Text-only Groq/GLM and Gemini Flash modes do not expose translated-audio controls. */
     private fun providerHasVoice(): Boolean =
-        settings.translationProvider != TranslationProvider.GROQ && !settings.geminiFlashTestMode
+        settings.translationProvider == TranslationProvider.GEMINI && !settings.geminiFlashTestMode
 
     private fun updateTuneButtonState() {
         (tuneButton?.background as? GradientDrawable)?.setColor(
