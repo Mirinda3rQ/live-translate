@@ -2,8 +2,7 @@ package com.livetranslate.app.data
 
 enum class TranslationProvider {
     GEMINI,
-    GROQ,
-    GLM;
+    GROQ;
 
     companion object {
         fun fromStorage(value: String?): TranslationProvider =

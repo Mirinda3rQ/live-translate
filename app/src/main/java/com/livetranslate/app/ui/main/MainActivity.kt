@@ -158,8 +158,6 @@ class MainActivity : ComponentActivity() {
                         val hasProviderKey = when (settings.translationProvider) {
                             TranslationProvider.GEMINI -> app.apiKeyStore.hasApiKey()
                             TranslationProvider.GROQ -> app.apiKeyStore.getGroqApiKey().isNotBlank()
-                            TranslationProvider.GLM -> app.apiKeyStore.getGroqApiKey().isNotBlank() &&
-                                app.apiKeyStore.hasGlmApiKey()
                         }
                         if (!hasProviderKey) {
                             SessionBus.setStatus(

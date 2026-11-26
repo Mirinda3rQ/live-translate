@@ -216,7 +216,6 @@ fun SubtitleScreen(
                             text = when (settings.translationProvider) {
                                 com.livetranslate.app.data.TranslationProvider.GEMINI -> "Gemini Live"
                                 com.livetranslate.app.data.TranslationProvider.GROQ -> "Groq"
-                                com.livetranslate.app.data.TranslationProvider.GLM -> "Groq Whisper + GLM"
                             },
                             fontSize = 16.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -227,8 +226,6 @@ fun SubtitleScreen(
                                     "ตรวจจับเสียงและแปลแบบ Live"
                                 com.livetranslate.app.data.TranslationProvider.GROQ ->
                                     "Groq Whisper และ Groq Chat"
-                                com.livetranslate.app.data.TranslationProvider.GLM ->
-                                    "ถอดเสียงด้วย Whisper แล้วแปลข้อความด้วย GLM"
                             },
                             fontSize = 12.sp,
                             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
@@ -245,8 +242,6 @@ fun SubtitleScreen(
                             "Media audio  →  Gemini Live  →  Thai subtitles"
                         com.livetranslate.app.data.TranslationProvider.GROQ ->
                             "Media audio  →  Whisper  →  Groq Chat  →  Thai"
-                        com.livetranslate.app.data.TranslationProvider.GLM ->
-                            "Media audio  →  Whisper  →  GLM  →  Thai"
                     },
                     fontSize = 12.sp,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
