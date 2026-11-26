@@ -127,6 +127,7 @@ class SubtitleOverlayController(
     private val configCallbacks = object : ComponentCallbacks {
         override fun onConfigurationChanged(newConfig: Configuration) {
             clampAndApply(persist = true, reason = "config")
+            rootView?.postDelayed({ clampAndApply(persist = true, reason = "config-settled") }, 350L)
         }
 
         override fun onLowMemory() = Unit
@@ -171,6 +172,9 @@ class SubtitleOverlayController(
                 WindowManager.LayoutParams.TYPE_PHONE
             },
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                // x/y are measured from the physical screen corner (not inside system bars),
+                // matching the screen size used for clamping, so it can reach every edge.
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 // Keep the overlay in the display coordinate space. NO_LIMITS
                 // lets WindowManager draw beyond the screen even when x/y are clamped.
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
@@ -427,15 +431,31 @@ class SubtitleOverlayController(
 
     private fun screenMetrics(): Triple<Int, Int, Float> {
         val density = context.resources.displayMetrics.density
+        // Ask the display itself: after a rotation a service/application context's
+        // currentWindowMetrics can still report the old orientation, which capped dragging
+        // to the old (portrait) width in landscape.
+        val display = runCatching {
+            (context.getSystemService(android.content.Context.DISPLAY_SERVICE)
+                as android.hardware.display.DisplayManager)
+                .getDisplay(android.view.Display.DEFAULT_DISPLAY)
+        }.getOrNull()
+        if (display != null) {
+            val real = android.util.DisplayMetrics()
+            @Suppress("DEPRECATION")
+            display.getRealMetrics(real)
+            if (real.widthPixels > 0 && real.heightPixels > 0) {
+                return Triple(real.widthPixels, real.heightPixels, density)
+            }
+        }
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val bounds = windowManager.currentWindowMetrics.bounds
             Triple(bounds.width(), bounds.height(), density)
         } else {
             @Suppress("DEPRECATION")
-            val display = windowManager.defaultDisplay
+            val fallback = windowManager.defaultDisplay
             val real = android.util.DisplayMetrics()
             @Suppress("DEPRECATION")
-            display.getRealMetrics(real)
+            fallback.getRealMetrics(real)
             Triple(real.widthPixels, real.heightPixels, density)
         }
     }
