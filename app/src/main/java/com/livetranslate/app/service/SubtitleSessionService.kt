@@ -80,7 +80,7 @@ class SubtitleSessionService : Service() {
     private var sessionJob: Job? = null
     private var reconnectJob: Job? = null
     private var flashTranslationJob: Job? = null
-    private var flashAudioQueue: Channel<ByteArray>? = null
+    private var flashAudioQueue: Channel<QueuedChunk>? = null
     private var flashAudioBuffer = ByteArrayOutputStream()
     private val flashAudioBufferLock = Any()
     private val speechChunker = com.livetranslate.app.audio.SpeechChunker()
@@ -178,6 +178,7 @@ class SubtitleSessionService : Service() {
         reconnectAttempts = 0
         SessionBus.setStatus(SessionBus.Status.Starting, AppStrings.get(R.string.status_starting))
         SessionBus.clearExport()
+        groqTranslationClient.resetLanguageLock() // do not carry a pinned Whisper language into a new session
         recentTranscripts.clear()
         recentTranslations.clear()
         accumulatedInput.clear()
@@ -462,7 +463,7 @@ class SubtitleSessionService : Service() {
     /** Gemini Flash consumes PCM from the selected capture source, including system Media. */
     private fun startFlashAudioCapture(apiKey: String) {
         val app = application as LiveTranslateApp
-        val queue = Channel<ByteArray>(Channel.UNLIMITED)
+        val queue = Channel<QueuedChunk>(Channel.UNLIMITED)
         flashAudioQueue = queue
         synchronized(flashAudioBufferLock) { flashAudioBuffer = ByteArrayOutputStream() }
         speechChunker.reset()
@@ -473,7 +474,15 @@ class SubtitleSessionService : Service() {
             var groqCooldownUntilMs = 0L
             var usingGeminiFallback = false
             var hybridStatusShown = false
-            for (pcm in queue) {
+            for (item in queue) {
+                val pcm = item.pcm
+                // Backpressure: skip a chunk that waited too long in the queue so the
+                // subtitles do not fall further and further behind the video.
+                val queuedMs = android.os.SystemClock.elapsedRealtime() - item.enqueuedAtMs
+                if (com.livetranslate.app.live.BacklogPolicy.shouldDrop(queuedMs)) {
+                    diag("queue", "drop age=$queuedMs ms pcm_ms=${pcm.size / 32}")
+                    continue
+                }
                 translationMutex.withLock {
                     if (!stopping) {
                         try {
@@ -645,7 +654,7 @@ class SubtitleSessionService : Service() {
             // not split mid-word before transcription.
             speechChunker.offer(pcm, hasAudibleMediaAudio(pcm)).forEach {
                 diag("audio", "chunk ${it.size / 32} ms")
-                queue.trySend(it)
+                queue.trySend(QueuedChunk(it, android.os.SystemClock.elapsedRealtime()))
             }
         }
         val onError: (String) -> Unit = { message -> scope.launch { stopEverything(message, error = true) } }
@@ -1426,3 +1435,6 @@ class SubtitleSessionService : Service() {
         }
     }
 }
+
+/** A PCM chunk waiting for translation, stamped so stale ones can be dropped. */
+private class QueuedChunk(val pcm: ByteArray, val enqueuedAtMs: Long)
