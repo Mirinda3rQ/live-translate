@@ -42,9 +42,8 @@ class SpeechChunkerTest {
     fun continuousSpeechIsCappedAtMax() {
         val c = SpeechChunker()
         val chunks = c.speak(50)                   // 5 s without a pause
-        assertEquals(2, chunks.size)
-        assertEquals(64_000, chunks[0].size)
-        assertEquals(64_000, chunks[1].size)
+        assertEquals(1, chunks.size)               // 3 s cap: 5 s -> one 3 s chunk, 2 s still buffered
+        assertEquals(96_000, chunks[0].size)
     }
 
     @Test

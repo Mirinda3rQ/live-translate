@@ -16,7 +16,7 @@ class SpeechChunker(
     private val minChunkBytes: Int = 24_000,     // 0.75 s
     private val pauseBytes: Int = 8_000,         // 0.25 s of silence ends a phrase
     private val longPauseBytes: Int = 16_000,    // 0.5 s of silence flushes short utterances
-    private val maxChunkBytes: Int = 64_000,     // 2 s hard cap
+    private val maxChunkBytes: Int = 96_000,     // 3 s hard cap (longer = fewer sentences cut in half)
 ) {
     private val buffer = ByteArrayOutputStream()
     private var silentBytes = 0
