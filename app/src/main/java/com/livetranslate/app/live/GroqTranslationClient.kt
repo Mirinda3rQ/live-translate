@@ -36,6 +36,8 @@ class GroqRefusalException(message: String) : IllegalStateException(message)
  * This is near-live (short audio chunks), not the Gemini Live WebSocket protocol.
  */
 class GroqTranslationClient {
+    private val languageLock = WhisperLanguageLock()
+
     /** Whisper only: returns the transcript ("" for silence / non-speech). */
     suspend fun transcribePcm(
         pcm16kMono: ByteArray,
@@ -50,11 +52,14 @@ class GroqTranslationClient {
 
         val wav = pcm16kToWav(pcm16kMono, 16_000)
         val audioBody = wav.toRequestBody("audio/wav".toMediaType())
+        // Pin the language once several chunks agree (see WhisperLanguageLock); null = auto-detect.
+        val forcedLanguage = languageLock.nextLanguage()
         val multipart = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("model", speechModel)
             .addFormDataPart("response_format", "verbose_json")
             .addFormDataPart("temperature", "0")
+            .also { b -> forcedLanguage?.let { b.addFormDataPart("language", it) } }
             .addFormDataPart("file", "audio.wav", audioBody)
             .build()
         val transcriptionRequest = Request.Builder()
@@ -93,9 +98,18 @@ class GroqTranslationClient {
                 }
                 if (confidenceFields > 0 && likelyNonSpeech == confidenceFields) return@use ""
             }
-            result.optString("text").trim()
+            languageLock.record(
+                WhisperLanguageNames.toIso(result.optString("language")),
+                forced = forcedLanguage != null,
+            )
+            val text = result.optString("text").trim()
+            // Whisper invents sign-offs ("thanks for watching") on silence/breathing: drop them.
+            if (WhisperHallucinations.isKnown(text)) "" else text
         }
     }
+
+    /** Forget the pinned Whisper language (call when a new session starts). */
+    fun resetLanguageLock() = languageLock.reset()
 
     suspend fun translatePcmToThai(
         pcm16kMono: ByteArray,
@@ -109,17 +123,44 @@ class GroqTranslationClient {
         return translateTranscriptToThai(transcript, apiKey, chatModel, systemPrompt = systemPrompt)
     }
 
-    /** Text translation on Groq. [previousLines] are earlier transcript lines used only as context. */
+    /**
+     * Text translation on Groq. [previousLines] are earlier transcript lines used only as context.
+     * GPT-OSS is safety-tuned and may refuse explicit lines; in that case the chunk is retried once on
+     * [REFUSAL_FALLBACK_MODEL]. If that also fails for any reason the original refusal is rethrown so
+     * the caller's existing Gemini fallback still runs.
+     */
     suspend fun translateTranscriptToThai(
         transcript: String,
         apiKey: String,
         chatModel: String = DEFAULT_CHAT_MODEL,
         previousLines: List<String> = emptyList(),
         systemPrompt: String = "",
+    ): String {
+        val model = effectiveChatModel(chatModel)
+        return try {
+            translateWithModel(transcript, apiKey, model, previousLines, systemPrompt)
+        } catch (refusal: GroqRefusalException) {
+            if (model.equals(REFUSAL_FALLBACK_MODEL, ignoreCase = true)) throw refusal
+            try {
+                translateWithModel(transcript, apiKey, REFUSAL_FALLBACK_MODEL, previousLines, systemPrompt)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (ignored: Exception) {
+                throw refusal
+            }
+        }
+    }
+
+    private suspend fun translateWithModel(
+        transcript: String,
+        apiKey: String,
+        model: String,
+        previousLines: List<String>,
+        systemPrompt: String,
     ): String = withContext(Dispatchers.IO) {
         require(apiKey.isNotBlank()) { "Missing Groq API key" }
-        val model = effectiveChatModel(chatModel)
-        val system = TargetLanguageGuard.thaiOnlySystemPrompt(systemPrompt)
+        val system = TargetLanguageGuard.thaiOnlySystemPrompt(systemPrompt) +
+            "\n\n" + TargetLanguageGuard.TRANSCRIPT_RULES
         val baseUser = userMessage(transcript, previousLines)
         val first = requestChat(apiKey, model, system, baseUser)
         if (first.isNotBlank() && TargetLanguageGuard.accepts(first, "th")) return@withContext first
@@ -266,6 +307,9 @@ class GroqTranslationClient {
         /** Pseudo chat-model id: Groq transcribes, Gemini translates the text with context. */
         const val HYBRID_GEMINI_MODEL = "gemini-hybrid"
         const val DEFAULT_CHAT_MODEL = "openai/gpt-oss-120b"
+
+        /** Second Groq model tried when GPT-OSS refuses a line (strong Japanese/Chinese; reasoning off). */
+        const val REFUSAL_FALLBACK_MODEL = "qwen/qwen3.8-27b"
 
         /** The hybrid pseudo-model is not a Groq model; when Groq must translate, use the default. */
         fun effectiveChatModel(model: String): String =

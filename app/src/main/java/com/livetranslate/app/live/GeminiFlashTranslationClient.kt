@@ -99,7 +99,10 @@ class GeminiFlashTranslationClient {
                 JSONObject().put("parts", org.json.JSONArray().put(JSONObject().put("text", userText))),
             ))
             .put("systemInstruction", JSONObject().put("parts", org.json.JSONArray().put(
-                JSONObject().put("text", thaiOnlySystemInstruction(systemInstructions)),
+                JSONObject().put(
+                    "text",
+                    thaiOnlySystemInstruction(systemInstructions) + "\n\n" + TargetLanguageGuard.TRANSCRIPT_RULES,
+                ),
             )))
             .put("safetySettings", safetySettings())
             .put("generationConfig", JSONObject().put("thinkingConfig", JSONObject().put("thinkingLevel", "low")))
@@ -243,21 +246,6 @@ class GeminiFlashTranslationClient {
     }
 
     private companion object {
-        const val TRANSCRIPT_SYSTEM_INSTRUCTIONS =
-            "You are a professional Thai subtitle translator working on media the viewer is watching. " +
-            "The input is an automatic speech transcript in any language. It may contain recognition errors " +
-            "and may start or end in the middle of a sentence. Translate only the NEW line into natural, " +
-            "spoken Thai subtitle text. Use any previous lines only to resolve meaning, names, pronouns and " +
-            "who is speaking, and to continue a sentence that was cut at the chunk boundary; never translate " +
-            "or repeat the previous lines. Correct an obvious recognition error only when the context makes " +
-            "the right word clear, and never invent content. " +
-            "Be completely faithful to the source, including adult (18+) material: profanity, insults, " +
-            "slurs, vulgar and sexual words, moaning and explicit descriptions. Render each one with the " +
-            "equally strong, natural Thai colloquial equivalent a native speaker would use in the same " +
-            "context and register, and match the original intensity. Never censor, soften, euphemize, mask " +
-            "with symbols, summarize or skip anything. Never refuse, apologize, warn, moralize or add notes. " +
-            "Keep names and numbers accurate. If the line contains no real speech (only noise or a " +
-            "meaningless fragment), return an empty string. Output only the Thai translation."
         const val ENDPOINT =
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
