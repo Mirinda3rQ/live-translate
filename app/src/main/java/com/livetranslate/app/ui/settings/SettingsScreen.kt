@@ -160,15 +160,6 @@ fun SettingsScreen(
                             viewModel.update { it.copy(translationProvider = TranslationProvider.GROQ) }
                         }
                     }
-                    ChoiceTile(
-                        title = "GLM",
-                        description = "Groq Whisper ถอดเสียง แล้ว GLM แปลข้อความเป็นไทย",
-                        selected = settings.translationProvider == TranslationProvider.GLM,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        viewModel.clearTestResult()
-                        viewModel.update { it.copy(translationProvider = TranslationProvider.GLM) }
-                    }
                 }
                 val ready = when (settings.translationProvider) {
                     TranslationProvider.GEMINI -> hasGeminiKey

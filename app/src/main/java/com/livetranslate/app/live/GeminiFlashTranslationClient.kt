@@ -99,7 +99,6 @@ class GeminiFlashTranslationClient {
                 JSONObject().put("text", thaiOnlySystemInstruction(systemInstructions)),
             )))
             .put("safetySettings", safetySettings())
-            .put("generationConfig", JSONObject().put("temperature", 0.3))
             .toString().toRequestBody(JSON_MEDIA_TYPE)
         val request = Request.Builder().url(ENDPOINT)
             .header("x-goog-api-key", apiKey)

@@ -7,6 +7,7 @@ enum class TranslationProvider {
 
     companion object {
         fun fromStorage(value: String?): TranslationProvider =
-            entries.firstOrNull { it.name == value } ?: GEMINI
+            // GLM is retired (too slow): a stored GLM choice falls back to the Groq pipeline.
+            if (value == "GLM") GROQ else entries.firstOrNull { it.name == value } ?: GEMINI
     }
 }

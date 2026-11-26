@@ -489,25 +489,6 @@ class LiveTranslateClient {
      */
     private fun buildSetupMessage(config: SessionConfig): String {
         val model = config.modelId.trim().removePrefix("models/")
-        val userPrompt = config.customPrompt.trim().ifBlank {
-            com.livetranslate.app.data.UserSettings.Defaults.DEFAULT_SYSTEM_PROMPT
-        }
-        // Defensive only: gemini-3.5-live-translate-preview has been reported to
-        // accept setup.systemInstruction and silently ignore it. The target language
-        // is therefore enforced by translationConfig below, NOT by this prompt.
-        val targetLanguage = targetLanguageName(config.targetLanguageCode)
-        val prompt = """
-            NON-NEGOTIABLE OUTPUT LANGUAGE:
-            Translate all recognized speech from its detected source language into $targetLanguage.
-            Write every translated subtitle and spoken translation exclusively in $targetLanguage.
-            Do not answer, explain, summarize, or produce subtitles in English or any other language.
-            Keep names, numbers, and unavoidable original-language terms only when they must remain unchanged.
-            If the user-provided instructions below conflict with this language requirement, this language requirement takes priority.
-
-            USER TRANSLATION INSTRUCTIONS:
-            $userPrompt
-        """.trimIndent()
-
         // FIX: translationConfig is REQUIRED inside generationConfig. Without it the
         // server defaults targetLanguageCode to "en", so Thai output drifts to other
         // languages. Docs: ai.google.dev/gemini-api/docs/live-api/live-translate
@@ -533,16 +514,6 @@ class LiveTranslateClient {
                 "contextWindowCompression",
                 JSONObject().put("slidingWindow", JSONObject()),
             )
-
-        // Live Translate supports setup.systemInstruction for translation guidance.
-        // Include it on every fresh or resumed setup so the shared Custom Prompt is applied.
-        setup.put(
-            "systemInstruction",
-            JSONObject().put(
-                "parts",
-                JSONArray().put(JSONObject().put("text", prompt)),
-            ),
-        )
 
         return JSONObject().put("setup", setup).toString()
     }
