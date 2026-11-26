@@ -187,7 +187,7 @@ class GroqTranslationClient {
 
     private fun userMessage(transcript: String, previousLines: List<String>): String = buildString {
         if (previousLines.isNotEmpty()) {
-            append("Previous lines (context only, do not translate or repeat them):\n")
+            append("Previous lines (source => Thai already shown; context only, do not translate or repeat them; keep names, pronouns and terminology consistent):\n")
             previousLines.forEach { append("- ").append(it).append('\n') }
             append('\n')
         }

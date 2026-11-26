@@ -93,6 +93,7 @@ class SubtitleSessionService : Service() {
     private val geminiCircuitBreaker = com.livetranslate.app.live.ProviderCircuitBreaker()
     /** Last few source-language lines, sent to Gemini as translation context (hybrid mode). */
     private val recentTranscripts = ArrayDeque<String>()
+    private val recentTranslations = ArrayDeque<String>()
     private var recognitionIntent: Intent? = null
     private var recognitionRestartPending = false
     /** True while restartTranslationInPlace() is rebuilding the pipeline; suppresses auto-reconnect/stop races. */
@@ -178,6 +179,7 @@ class SubtitleSessionService : Service() {
         SessionBus.setStatus(SessionBus.Status.Starting, AppStrings.get(R.string.status_starting))
         SessionBus.clearExport()
         recentTranscripts.clear()
+        recentTranslations.clear()
         accumulatedInput.clear()
         accumulatedOutput.clear()
         fullInput.clear()
@@ -703,7 +705,10 @@ class SubtitleSessionService : Service() {
             diag("latency", "stage=hybrid-empty total_ms=${android.os.SystemClock.elapsedRealtime() - pipelineStartedAt}")
             return ""
         }
-        val context = recentTranscripts.toList()
+        val context = recentTranscripts.toList().mapIndexed { i, src ->
+            val th = recentTranslations.getOrNull(i).orEmpty()
+            if (th.isBlank()) src else "$src => $th"
+        }
 
         suspend fun translateWithGroqFallback(): String =
             groqTranslationClient.translateTranscriptToThai(
@@ -782,7 +787,9 @@ class SubtitleSessionService : Service() {
                 else -> "groq-chat"
             })
         recentTranscripts.addLast(transcript)
+        recentTranslations.addLast(translated)
         while (recentTranscripts.size > HYBRID_CONTEXT_LINES) recentTranscripts.removeFirst()
+        while (recentTranslations.size > HYBRID_CONTEXT_LINES) recentTranslations.removeFirst()
         // Show the source line too (visible when bilingual captions are on).
         appendTranscript(accumulatedInput, transcript)
         appendFull(fullInput, transcript)
@@ -1219,6 +1226,7 @@ class SubtitleSessionService : Service() {
         pendingPreviewInput = null
         pendingPreviewOutput = null
         recentTranscripts.clear()
+        recentTranslations.clear()
         accumulatedInput.clear()
         accumulatedOutput.clear()
         sameLanguageMode.reset()
@@ -1385,7 +1393,7 @@ class SubtitleSessionService : Service() {
         private const val MAX_RECONNECTS = 6
         private const val RECONNECT_BASE_DELAY_MS = 1_500L
         private const val RECOGNITION_RESTART_DELAY_MS = 350L
-        private const val HYBRID_CONTEXT_LINES = 3
+        private const val HYBRID_CONTEXT_LINES = 5
         private const val JAPANESE_LOCALE = "ja-JP"
         private const val CHINESE_LOCALE = "zh-CN"
         const val ACTION_START = "com.livetranslate.app.action.START_SUBTITLE"

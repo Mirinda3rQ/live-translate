@@ -35,6 +35,7 @@ class GeminiFlashTranslationClient {
                     ),
                 )
                 .put("safetySettings", safetySettings())
+                .put("generationConfig", JSONObject().put("thinkingConfig", JSONObject().put("thinkingLevel", "low")))
                 .toString()
                 .toRequestBody(JSON_MEDIA_TYPE)
             val request = Request.Builder()
@@ -84,7 +85,9 @@ class GeminiFlashTranslationClient {
         require(apiKey.isNotBlank()) { "Missing API key" }
         val userText = buildString {
             if (previousLines.isNotEmpty()) {
-                append("Previous lines of the same video (context only; do not translate or repeat them):\n")
+                append("Previous lines of the same video, shown as: source => Thai translation already shown to the viewer. ")
+                append("Context only: never translate or repeat them. Keep names, pronouns, speaker gender, tone and terminology consistent with the Thai already used, ")
+                append("and if the new line continues an unfinished sentence, translate it as a continuation.\n")
                 previousLines.forEach { append("- ").append(it).append('\n') }
                 append('\n')
             }
@@ -99,6 +102,7 @@ class GeminiFlashTranslationClient {
                 JSONObject().put("text", thaiOnlySystemInstruction(systemInstructions)),
             )))
             .put("safetySettings", safetySettings())
+            .put("generationConfig", JSONObject().put("thinkingConfig", JSONObject().put("thinkingLevel", "low")))
             .toString().toRequestBody(JSON_MEDIA_TYPE)
         val request = Request.Builder().url(ENDPOINT)
             .header("x-goog-api-key", apiKey)
@@ -146,6 +150,7 @@ class GeminiFlashTranslationClient {
                 JSONObject().put("text", thaiOnlySystemInstruction(systemInstructions)),
             )))
             .put("safetySettings", safetySettings())
+            .put("generationConfig", JSONObject().put("thinkingConfig", JSONObject().put("thinkingLevel", "low")))
             .toString().toRequestBody(JSON_MEDIA_TYPE)
         val request = Request.Builder().url(ENDPOINT)
             .header("x-goog-api-key", apiKey)
